@@ -18,7 +18,9 @@
     .btn-row { display: flex; gap: 10px; margin-top: 14px; }
     .btn-row button { padding: 10px 16px; cursor: pointer; border-radius: 6px; font-size: 14px; border: 1px solid #cbd5e1; background: #fff; }
     .btn-row .primary-btn { background: #059669; color: #fff; border: none; font-weight: 600; }
-    #logOutput { margin-top: 14px; padding: 10px; border-radius: 6px; background: #f1f5f9; font-size: 13px; min-height: 40px; white-space: pre-wrap; display: none; }
+    #logOutput { margin-top: 14px; padding: 10px; border-radius: 6px; background: #f1f5f9; font-size: 13px; min-height: 24px; white-space: pre-wrap; display: none; }
+    details { margin-top: 6px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; background: #f8fafc; }
+    summary { cursor: pointer; font-weight: 600; font-size: 14px; color: #334155; }
   </style>
 </head>
 <body>
@@ -28,28 +30,28 @@
     <button onclick="location.href='index.html'">index.html로 돌아가기</button>
   </div>
 
-  <!-- 1. API 키 서버 안전 등록 -->
+  <!-- API 키 등록 바 -->
   <div class="key-bar">
     <label><strong>🔑 Gemini API 키:</strong></label>
-    <input type="password" id="apiKeyInput" placeholder="서버 메모리에 보관할 API 키 입력 (새로고침 시 입력창 초기화)" />
+    <input type="password" id="apiKeyInput" placeholder="서버 메모리에 보관할 API 키 입력 (새로고침 시 초기화)" />
     <button id="saveKeyBtn">서버 등록</button>
     <span id="keyStatus" style="font-size: 13px; color: #64748b;">확인 중...</span>
   </div>
 
-  <!-- 2. AI 통합 프롬프트 & 페이지 수정 컨트롤 -->
+  <!-- AI 통합 컨트롤 -->
   <div class="box">
     <h2>AI 페이지 & 프롬프트 컨트롤</h2>
     <p style="font-size: 13px; color: #64748b; margin-top: -6px; margin-bottom: 16px;">
-      수정 지시나 질문을 입력하면 선택한 Gemini 모델이 프롬프트를 보정하거나 <code>index.html</code> 파일을 직접 갱신합니다.
+      수정 지시를 입력하면 Gemini 모델이 프롬프트를 보정하거나 <code>index.html</code> 파일을 직접 수정합니다.
     </p>
 
     <!-- 모델 선택 -->
     <div class="form-group">
       <label for="modelSelect">사용할 AI 모델</label>
       <select id="modelSelect">
-        <option value="gemini-2.5-flash">Gemini 2.5 Flash (추천: 빠른 속도)</option>
+        <option value="gemini-2.5-flash">Gemini 2.5 Flash (빠른 속도)</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-        <option value="gemini-1.5-pro">Gemini 1.5 Pro (고성능 추론)</option>
+        <option value="gemini-1.5-pro">Gemini 1.5 Pro (고성능)</option>
       </select>
     </div>
 
@@ -57,38 +59,37 @@
     <div class="form-group">
       <label for="modifyTarget">작업 대상</label>
       <select id="modifyTarget">
-        <option value="prompt">프롬프트 (페이지 컨텍스트/대화)</option>
         <option value="index">index.html (메인 hello 페이지 파일)</option>
+        <option value="prompt">프롬프트 (페이지 컨텍스트/대화)</option>
       </select>
     </div>
 
     <!-- 지시 입력란 -->
     <div class="form-group">
       <label for="modifyInstruction">지시 / 대화 입력</label>
-      <input type="text" id="modifyInstruction" placeholder="예: 버튼 색상을 초록색으로 바꿔줘 / hello를 안녕하세요로 변경해줘" />
+      <input type="text" id="modifyInstruction" placeholder="예: 글자 크기를 키워줘 / 버튼을 노란색으로 바꿔줘" />
     </div>
 
-    <!-- 내용 미리보기 / 프롬프트 본문 -->
+    <!-- 가려진 컨텍스트 (클릭 시 펼침) -->
     <div class="form-group">
-      <label for="modifyPreview">현재 내용 / 컨텍스트</label>
-      <textarea id="modifyPreview" rows="8"></textarea>
+      <label>현재 내용 / 컨텍스트 (접힘 상태)</label>
+      <details>
+        <summary>▶ 클릭하여 내용 펼쳐보기 / 확인</summary>
+        <textarea id="modifyPreview" rows="8" style="margin-top: 10px;"></textarea>
+      </details>
     </div>
 
-    <!-- 실행 버튼 -->
+    <!-- 버튼 영역 -->
     <div class="btn-row">
       <button id="loadContentBtn">현재 내용 불러오기</button>
       <button id="applyModifyBtn" class="primary-btn">AI 실행 / 수정 적용</button>
     </div>
 
+    <!-- 결과 상태 출력 줄 -->
     <div id="logOutput"></div>
   </div>
 
   <script>
-    // Codespaces 포트 3000번 백엔드 주소 계산
-    const API_BASE = window.location.port === '3000' 
-      ? '' 
-      : window.location.origin.replace(window.location.port, '3000');
-
     const apiKeyInput = document.getElementById('apiKeyInput');
     const saveKeyBtn = document.getElementById('saveKeyBtn');
     const keyStatus = document.getElementById('keyStatus');
@@ -107,25 +108,22 @@
       logOutput.innerText = text;
     }
 
-    // 초기 상태 확인
-    fetch(`${API_BASE}/api/key/status`)
+    // 초기 서버 연결 상태 점검
+    fetch('/api/key/status')
       .then(r => r.json())
       .then(d => {
         keyStatus.innerText = d.hasKey ? '🟢 서버 연결됨' : '🔴 API 키 미등록';
       })
       .catch(() => {
-        keyStatus.innerText = '🔴 서버 오프라인 (3000번 포트 확인 필요)';
+        keyStatus.innerText = '🔴 서버 오프라인';
       });
-
-    // 기본 본문 컨텍스트 채우기
-    modifyPreview.value = document.body.innerText.slice(0, 500);
 
     // API 키 등록
     saveKeyBtn.onclick = async () => {
       const key = apiKeyInput.value.trim();
       if (!key) return alert('API 키를 입력하세요');
       try {
-        const res = await fetch(`${API_BASE}/api/key`, {
+        const res = await fetch('/api/key', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ apiKey: key })
@@ -145,30 +143,31 @@
     loadContentBtn.onclick = async () => {
       if (modifyTarget.value === 'index') {
         try {
-          const r = await fetch(`${API_BASE}/api/page/index`);
+          const r = await fetch('/api/page/index');
+          if (!r.ok) throw new Error('서버 응답 오류 (상태 코드: ' + r.status + ')');
           const d = await r.json();
           modifyPreview.value = d.content || '';
-          showLog('index.html 내용을 불러왔습니다.');
+          showLog('index.html 원본 코드를 정상적으로 불러왔습니다.');
         } catch (e) {
           showLog('내용 불러오기 실패: ' + e.message, true);
         }
       } else {
-        modifyPreview.value = document.body.innerText.slice(0, 600);
-        showLog('현재 페이지 컨텍스트를 불러왔습니다.');
+        modifyPreview.value = '기본 프롬프트 컨텍스트입니다. 원하는 지시나 규칙을 여기에 적어둘 수 있습니다.';
+        showLog('프롬프트 컨텍스트를 불러왔습니다.');
       }
     };
 
     // AI 수정 및 실행
     applyModifyBtn.onclick = async () => {
       const instruction = modifyInstruction.value.trim();
-      if (!instruction) return alert('지시 또는 메시지를 입력하세요');
+      if (!instruction) return alert('지시 사항을 입력하세요');
 
       applyModifyBtn.disabled = true;
       applyModifyBtn.innerText = 'AI 처리 중...';
-      showLog('AI 모델 요청 중...');
+      showLog('AI 모델이 요청을 분석하고 수정하는 중입니다...');
 
       try {
-        const res = await fetch(`${API_BASE}/api/ai-modify`, {
+        const res = await fetch('/api/ai-modify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -185,7 +184,7 @@
           modifyInstruction.value = '';
           showLog(`성공: [${modelSelect.value}] 모델을 통해 반영되었습니다.`);
         } else {
-          showLog('실패: ' + (d.error || '알 수 없는 오류'), true);
+          showLog('수정 실패: ' + (d.error || '알 수 없는 오류'), true);
         }
       } catch (e) {
         showLog('요청 오류: ' + e.message, true);
