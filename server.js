@@ -126,6 +126,15 @@ ${currentContent || ''}`;
   }
 });
 
+
+app.get("/api/key/status", (req, res) => {
+  res.json({ hasKey: Boolean(memoryApiKey || process.env.GEMINI_API_KEY) });
+});
+app.post("/api/key", (req, res) => {
+  memoryApiKey = (req.body && req.body.apiKey) || "";
+  res.json({ ok: true, hasKey: Boolean(memoryApiKey) });
+});
+
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
