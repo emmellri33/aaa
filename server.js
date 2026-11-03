@@ -6,7 +6,8 @@ const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+let memoryApiKey = process.env.GEMINI_API_KEY || "";
+const GEMINI_API_KEY = (memoryApiKey || (memoryApiKey || process.env.GEMINI_API_KEY)) || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const INDEX_PATH = path.join(__dirname, 'index.html');
 
