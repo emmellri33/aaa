@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Hello</title>
+  <style>
+    #hello {
+      color: blue;
+      font-size: 64px;
+      font-weight: bold;
+    }
+    #counter {
+      font-size: 24px;
+      margin: 16px 0;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 18px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1 id="hello">hello</h1>
+  <div id="counter">0</div>
+  <button id="btn">+1</button>
+  <script>
+    let count = 0;
+    const counter = document.getElementById('counter');
+    document.getElementById('btn').addEventListener('click', () => {
+      count++;
+      counter.textContent = count;
+    });
+  </script>
+</body>
+</html>
