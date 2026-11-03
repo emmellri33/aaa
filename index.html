@@ -18,19 +18,215 @@
       font-size: 18px;
       cursor: pointer;
     }
+    .todo-section {
+      margin-top: 32px;
+      max-width: 480px;
+    }
+    .todo-input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .todo-input-row input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+    }
+    .todo-input-row button {
+      padding: 10px 16px;
+      font-size: 16px;
+    }
+    #todo-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    #todo-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+    }
+    #todo-list li.done .todo-text {
+      text-decoration: line-through;
+      color: #999;
+    }
+    .todo-text {
+      flex: 1;
+      cursor: pointer;
+      user-select: none;
+    }
+    .delete-btn {
+      padding: 4px 10px;
+      font-size: 14px;
+      background: #ff4d4f;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    /* dark mode */
+    body.dark {
+      background: #1e1e1e;
+      color: #f0f0f0;
+    }
+    body.dark #hello { color: #4da6ff; }
+    body.dark .todo-section { color: #f0f0f0; }
+    body.dark #todo-list li { border-bottom-color: #444; }
+    body.dark #todo-list li.done .todo-text { color: #666; }
+    body.dark .todo-input-row input {
+      background: #2a2a2a;
+      color: #f0f0f0;
+      border: 1px solid #555;
+    }
+    body.dark #counter { color: #f0f0f0; }
+    body.dark button { background: #3a3a3a; color: #f0f0f0; border: 1px solid #555; }
+    body.dark .delete-btn { background: #ff4d4f; color: #fff; border: none; }
+    #theme-toggle {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      padding: 8px 14px;
+      font-size: 14px;
+    }
+    #blank-btn {
+      position: fixed;
+      top: 56px;
+      right: 16px;
+      padding: 8px 14px;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
+  <button id="theme-toggle">🌙 다크 모드</button>
+  <button id="blank-btn">빈 페이지로 이동</button>
   <h1 id="hello">hello</h1>
   <div id="counter">0</div>
   <button id="btn">+1</button>
+
+  <div class="todo-section">
+    <h2>할 일 목록</h2>
+    <div class="todo-input-row">
+      <input type="text" id="todo-input" placeholder="할 일을 입력하세요" />
+      <button id="todo-add">추가</button>
+    </div>
+    <ul id="todo-list"></ul>
+  </div>
+
   <script>
+    // counter
     let count = 0;
     const counter = document.getElementById('counter');
     document.getElementById('btn').addEventListener('click', () => {
       count++;
       counter.textContent = count;
     });
+
+    // safe localStorage helpers
+    function storageGet(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw === null ? fallback : JSON.parse(raw);
+      } catch (e) {
+        return fallback;
+      }
+    }
+    function storageSet(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // todo (id-based)
+    const STORAGE_KEY = 'todos';
+    let todos = storageGet(STORAGE_KEY, []);
+    if (!Array.isArray(todos)) todos = [];
+    // ensure every todo has an id
+    todos = todos.map((t, i) => ({
+      id: (t && t.id) ? t.id : (Date.now() + i),
+      text: (t && typeof t.text === 'string') ? t.text : '',
+      done: !!(t && t.done)
+    })).filter(t => t.text);
+
+    const listEl = document.getElementById('todo-list');
+    const inputEl = document.getElementById('todo-input');
+
+    function save() {
+      storageSet(STORAGE_KEY, todos);
+    }
+
+    function render() {
+      listEl.innerHTML = '';
+      todos.forEach((todo) => {
+        const li = document.createElement('li');
+        if (todo.done) li.classList.add('done');
+
+        const span = document.createElement('span');
+        span.className = 'todo-text';
+        span.textContent = todo.text;
+        span.addEventListener('click', () => {
+          const t = todos.find(x => x.id === todo.id);
+          if (t) { t.done = !t.done; save(); render(); }
+        });
+
+        const del = document.createElement('button');
+        del.className = 'delete-btn';
+        del.textContent = '삭제';
+        del.addEventListener('click', () => {
+          todos = todos.filter(x => x.id !== todo.id);
+          save();
+          render();
+        });
+
+        li.appendChild(span);
+        li.appendChild(del);
+        listEl.appendChild(li);
+      });
+    }
+
+    function addTodo() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      todos.push({ id: Date.now() + Math.random(), text, done: false });
+      inputEl.value = '';
+      save();
+      render();
+    }
+
+    document.getElementById('todo-add').addEventListener('click', addTodo);
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addTodo();
+    });
+
+    // theme
+    const themeKey = 'theme';
+    const toggleBtn = document.getElementById('theme-toggle');
+    function applyTheme(theme) {
+      if (theme === 'dark') {
+        document.body.classList.add('dark');
+        toggleBtn.textContent = '☀️ 라이트 모드';
+      } else {
+        document.body.classList.remove('dark');
+        toggleBtn.textContent = '🌙 다크 모드';
+      }
+    }
+    applyTheme(localStorage.getItem(themeKey) || 'light');
+    toggleBtn.addEventListener('click', () => {
+      const next = document.body.classList.contains('dark') ? 'light' : 'dark';
+      try { localStorage.setItem(themeKey, next); } catch (e) {}
+      applyTheme(next);
+    });
+
+    document.getElementById('blank-btn').addEventListener('click', () => {
+      window.location.href = 'blank.html';
+    });
+
+    render();
   </script>
 </body>
 </html>

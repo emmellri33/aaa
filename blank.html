@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Blank</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; line-height: 1.5; }
+    .nav-btns { margin-bottom: 20px; display: flex; gap: 8px; }
+    .nav-btns button { padding: 8px 12px; cursor: pointer; }
+    .box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; margin-bottom: 20px; background: #fff; }
+    .key-bar { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; margin-bottom: 16px; display: flex; gap: 8px; align-items: center; }
+    .key-bar input { flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; }
+    .key-bar button { padding: 6px 12px; cursor: pointer; background: #2563eb; color: #fff; border: none; border-radius: 4px; }
+    .chat-messages { height: 220px; border: 1px solid #e2e8f0; padding: 12px; overflow-y: auto; border-radius: 6px; margin-bottom: 12px; background: #fafafa; }
+    .msg { margin-bottom: 8px; }
+    .msg.user { color: #1e40af; font-weight: bold; }
+    .msg.ai { color: #0f172a; }
+    .chat-controls { display: flex; gap: 8px; margin-bottom: 8px; }
+    .chat-controls select { padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1; }
+    .input-row { display: flex; gap: 8px; }
+    .input-row input { flex: 1; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; }
+    .input-row button { padding: 8px 16px; cursor: pointer; }
+    textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>빈 페이지 1</h1>
+  <div class="nav-btns">
+    <button onclick="location.href='blank2.html'">다음 빈 페이지로 이동</button>
+    <button onclick="location.href='index.html'">index.html로 돌아가기</button>
+  </div>
+
+  <!-- 1. API 키 서버 안전 등록 바 -->
+  <div class="key-bar">
+    <label><strong>🔑 Gemini API 키:</strong></label>
+    <input type="password" id="apiKeyInput" placeholder="서버 메모리에 안전 저장할 API 키 입력 (새로고침 시 자동 보호)" />
+    <button id="saveKeyBtn">서버 등록</button>
+    <span id="keyStatus" style="font-size: 13px; color: #64748b;">확인 중...</span>
+  </div>
+
+  <!-- 2. AI 채팅 영역 (모델 선택 복구) -->
+  <div class="box">
+    <h2>간단한 채팅 (AI)</h2>
+    <div class="chat-controls">
+      <label for="modelSelect">모델 선택:</label>
+      <select id="modelSelect">
+        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+      </select>
+    </div>
+
+    <details style="margin-bottom: 12px;">
+      <summary style="cursor: pointer; color: #475569;">프롬프트 / 페이지 컨텍스트 편집</summary>
+      <textarea id="promptContext" rows="3"></textarea>
+    </details>
+
+    <div class="chat-messages" id="chatMessages"></div>
+
+    <div class="input-row">
+      <input type="text" id="chatInput" placeholder="메시지를 입력하세요" />
+      <button id="chatSend">전송</button>
+    </div>
+  </div>
+
+  <!-- 3. 클라인이 만든 페이지 직접 수정 섹션 유지 -->
+  <div class="box">
+    <h3>AI 페이지/프롬프트 직접 수정</h3>
+    <p style="font-size: 13px; color: #475569;">빈 페이지 1의 AI가 <code>index.html</code> 또는 프롬프트를 직접 수정하여 서버에 반영합니다.</p>
+    
+    <label>대상:</label>
+    <select id="modifyTarget">
+      <option value="index">index.html (메인 hello 페이지)</option>
+      <option value="prompt">프롬프트 (페이지 컨텍스트)</option>
+    </select>
+
+    <div style="margin-top: 8px;">
+      <label>수정 지시:</label>
+      <input type="text" id="modifyInstruction" placeholder="예: hello를 안녕하세요로 바꿔줘" style="width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px;" />
+    </div>
+
+    <div style="margin-top: 8px;">
+      <label>현재 내용 (참고):</label>
+      <textarea id="modifyPreview" rows="4" readonly></textarea>
+    </div>
+
+    <div style="margin-top: 10px; display: flex; gap: 8px;">
+      <button id="loadContentBtn" style="padding: 6px 12px; cursor: pointer;">현재 내용 불러오기</button>
+      <button id="applyModifyBtn" style="padding: 6px 12px; cursor: pointer; background: #059669; color: #fff; border: none; border-radius: 4px;">AI로 수정 적용</button>
+    </div>
+  </div>
+
+  <script>
+    // 1. API 키 관리 로직
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    const saveKeyBtn = document.getElementById('saveKeyBtn');
+    const keyStatus = document.getElementById('keyStatus');
+
+    fetch('/api/key/status').then(r => r.json()).then(d => {
+      keyStatus.innerText = d.hasKey ? '🟢 서버 연결됨' : '🔴 API 키 미등록';
+    }).catch(() => { keyStatus.innerText = '🔴 서버 오프라인'; });
+
+    saveKeyBtn.onclick = async () => {
+      const key = apiKeyInput.value.trim();
+      if (!key) return alert('API 키를 입력하세요');
+      const res = await fetch('/api/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key })
+      });
+      const d = await res.json();
+      if (d.hasKey) {
+        keyStatus.innerText = '🟢 서버 연결됨';
+        apiKeyInput.value = '';
+        alert('서버 메모리에 안전하게 등록되었습니다.');
+      }
+    };
+
+    // 2. 채팅 로직
+    const chatInput = document.getElementById('chatInput');
+    const chatSend = document.getElementById('chatSend');
+    const chatMessages = document.getElementById('chatMessages');
+    const promptContext = document.getElementById('promptContext');
+    const modelSelect = document.getElementById('modelSelect');
+
+    promptContext.value = document.body.innerText.slice(0, 500);
+
+    function appendMsg(role, text) {
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      div.innerText = `${role === 'user' ? '나' : 'AI'}: ${text}`;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function handleSend() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      appendMsg('user', text);
+      chatInput.value = '';
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            pageContext: promptContext.value,
+            model: modelSelect.value
+          })
+        });
+        const d = await res.json();
+        appendMsg('ai', d.reply || d.text || '응답을 받지 못했습니다.');
+      } catch (e) {
+        appendMsg('ai', '오류 발생: ' + e.message);
+      }
+    }
+
+    chatSend.onclick = handleSend;
+    chatInput.onkeydown = (e) => { if (e.key === 'Enter') handleSend(); };
+
+    // 3. 페이지 직접 수정 연동
+    const modifyTarget = document.getElementById('modifyTarget');
+    const modifyInstruction = document.getElementById('modifyInstruction');
+    const modifyPreview = document.getElementById('modifyPreview');
+    const loadContentBtn = document.getElementById('loadContentBtn');
+    const applyModifyBtn = document.getElementById('applyModifyBtn');
+
+    loadContentBtn.onclick = async () => {
+      if (modifyTarget.value === 'index') {
+        const r = await fetch('/api/page/index');
+        const d = await r.json();
+        modifyPreview.value = d.content || '';
+      } else {
+        modifyPreview.value = promptContext.value;
+      }
+    };
+
+    applyModifyBtn.onclick = async () => {
+      const instruction = modifyInstruction.value.trim();
+      if (!instruction) return alert('수정 지시를 입력하세요');
+      applyModifyBtn.innerText = '수정 처리 중...';
+      try {
+        const res = await fetch('/api/ai-modify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target: modifyTarget.value,
+            instruction: instruction,
+            currentContent: modifyPreview.value
+          })
+        });
+        const d = await res.json();
+        if (d.ok) {
+          alert('수정이 적용되었습니다!');
+          if (modifyTarget.value === 'prompt') promptContext.value = d.content;
+          modifyPreview.value = d.content || '';
+        } else {
+          alert('수정 실패: ' + (d.error || '알 수 없는 오류'));
+        }
+      } catch (e) {
+        alert('요청 중 오류: ' + e.message);
+      } finally {
+        applyModifyBtn.innerText = 'AI로 수정 적용';
+      }
+    };
+  </script>
+</body>
+</html>
