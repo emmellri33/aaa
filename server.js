@@ -113,17 +113,20 @@ app.post('/api/chat', async (req, res) => {
     const memoryBlock = facts.length > 0 ? "[공유 기억 (memory.json)]\n- " + facts.join("\n- ") + "\n\n" : "";
 
     const prompt = [
+      "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.",
+      "",
       "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다.",
-      "[헛소리 방지 절대 규칙]",
-      "1. 코드를 직접 확인하기 전에 절대 단정하거나 추측해서 말하지 마세요.",
-      "2. 대화 모드에서는 index.html의 관련 발췌본만 제공됩니다. 발췌본에 없는 내용을 임의로 지어내지 말고, 불확실하면 사용자에게 먼저 질문하세요.",
+      "[대화 및 증거 규칙]",
+      "1. 답변 맨 첫 줄에 반드시 사용자의 의도를 한 줄로 먼저 적고 시작하세요. 형식: [의도] ...",
+      "2. 막연한 지시는 합리적으로 추측해 먼저 제안하고 추측한 부분에는 반드시 [추측] 표시를 붙이세요. 도저히 알 수 없을 때만 질문하세요.",
+      "3. 단정적인 설명은 반드시 아래 제공된 코드 발췌본의 실제 줄 번호나 선택자를 인용(근거 제시)하며 작성하세요. 근거 없는 \"됩니다\"나 확인 전 \"완료·검증완료\" 문구는 절대 금지합니다.",
       "",
       memoryBlock + "[index.html 관련 발췌 코드]\n" + snippet,
       "",
       "사용자 메시지: " + msg
     ].join("\n");
 
-    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(activeKey).length, "model=" + useModel);
+    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(activeKey).length, "model="+ useModel);
     const response = await ai.models.generateContent({
       model: useModel,
       contents: buildMultimodalContents(prompt, images),
@@ -160,20 +163,25 @@ app.post('/api/page/index', (req, res) => {
   });
 });
 
-const PATCH_SYSTEM_PROMPT = [
-  "당신은 index.html 패치 생성 전용 AI입니다.",
-  "[절대 규칙]",
-  "1. 마크다운 코드블록(```), 인사말, 잡담을 절대 출력하지 마세요. 오직 유효한 JSON 객체 1개만 출력하세요.",
-  "2. 한 번에 딱 한 조각(단일 위치)만 수정하세요.",
-  "3. 코드를 읽기 전 단정 금지. search 필드에는 현재 index.html 파일에 글자·공백·줄바꿈까지 100% 정확히 존재하는 원본 조각만 넣으세요.",
-  "4. explanation 필드는 결론 먼저 짧게 반드시 아래 두 줄 형식으로만 작성하세요:",
-  "   [뭘] 무엇을 어떻게 바꾸는지 한 줄 결론\n[왜] 왜 이렇게 바꾸는지 한 줄 이유",
-  "5. 지시가 명확하면 아래 JSON 규격만 반환하세요:",
-  "{\"type\":\"patch\",\"explanation\":\"[뭘] ...\\n[왜] ...\",\"target\":\"index.html\",\"search\":\"파일에 정확히 존재하는 원본 조각\",\"replace\":\"대체할 새 조각\"}",
-  "6. 지시가 약간 모호해도 합리적으로 추측하여 패치를 먼저 제안하세요. explanation [왜] 줄에 [추측] 표시를 붙이세요. 무엇을 바꿀지 전혀 알 수 없을 때만 question 규격으로 질문하세요:",
-  "{\"type\":\"question\",\"question\":\"사용자에게 물어볼 구체적인 질문\"}"
-].join("\n");
+const USER_PROFILE_HEADER = "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.";
 
+const PATCH_SYSTEM_PROMPT = [
+  USER_PROFILE_HEADER,
+  "",
+  "당신은 index.html 패치 생성 전용 AI입니다.",
+  "[절대 규칙 — 보기 → 고치기 → 눈]",
+  "1. 마크다운 코드블록, 인사말, 잡담을 절대 출력하지 마세요. 오직 유효한 JSON 객체 1개만 출력하세요.",
+  "2. [의도 추론 & 추측 표시] 패치 전에 사용자 의도를 먼저 파악하세요. 지시가 다소 막연하더라도 파일 맥락상 합리적으로 추측 가능하면 질문하지 말고 먼저 패치를 제안하되, 추측한 부분에는 반드시 [추측] 표시를 넣으세요. 전혀 알 수 없을 때만 question 타입으로 질문하세요.",
+  "3. [전수 탐색] 패치 작성 전 index.html 전체를 읽고, 대상 선택자·속성·값의 변형(다크모드 body.dark, 미디어쿼리 @media, hover 등)을 전수 탐색하세요. 다크모드나 변형 규칙에 같은 속성이 걸려 있다면 함께 수정하여 누락을 막으세요.",
+  "4. [증거 인용 & 완료 금지] search 필드에는 현재 index.html에 글자·공백·줄바꿈까지 100% 정확히 존재하는 원본 조각만 넣으세요. 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
+  "5. [설명 2줄 규격] explanation 필드는 결론 먼저 짧게 반드시 아래 두 줄 형식으로만 작성하세요:",
+  "   [뭘] (의도: 사용자 의도 요약) 무엇을 어떻게 바꾸는지 결론 한 줄",
+  "   [왜] (근거: 매치된 기존 선택자/코드 인용, 추측 시 [추측] 명시) 바꾸는 이유 한 줄",
+  "6. 지시를 합리적으로 수행할 수 있으면 아래 JSON 규격만 반환하세요:",
+  "{\"type\":\"patch\",\"explanation\":\"[뭘] (의도: ...) ...\\n[왜] (근거: ...) ...\",\"target\":\"index.html\",\"search\":\"파일에 정확히 존재하는 원본 조각\",\"replace\":\"대체할 새 조각\"}",
+  "7. 대상이 아예 없거나 전혀 알 수 없을 때만 아래 JSON 규격만 반환하세요:",
+  "{\"type\":\"question\",\"question\":\"[의도 확인] 사용자에게 물어볼 구체적인 질문\"}",
+].join("\n");
 function extractJsonString(raw) {
   const txt = String(raw || "").trim();
   const first = txt.indexOf("{");
