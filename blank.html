@@ -980,10 +980,29 @@
       const undoBtn = bubble.querySelector(".undo-patch-btn");
       const statusSpan = bubble.querySelector(".patch-status");
       let backupContent = null;
+      let armedForConfirm = false;
+      const disarmConfirm = () => {
+        armedForConfirm = false;
+        applyBtn.innerText = "✅ 전 조각 일괄 적용";
+        applyBtn.style.background = "#2563eb";
+      };
 
       applyBtn.onclick = async () => {
         await loadIndexCode();
         const current = contextText.value;
+
+        // live 보호 1: 적용 전 자동 스냅샷 (git add→commit→push, 실패해도 인메모리 백업으로 계속)
+        statusSpan.style.color = "#475569";
+        statusSpan.innerText = "⏳ 적용 전 자동 스냅샷 중...";
+        try {
+          const snapR = await fetch("/api/snapshot", { method: "POST" });
+          const snapD = await snapR.json().catch(() => ({}));
+          if (!snapD.ok) {
+            await logFailureToServer("적용 전 자동 스냅샷 실패", snapD.error || "스냅샷 실패", "스냅샷 API 점검, 인메모리 백업으로 계속");
+          }
+        } catch (snapE) {
+          await logFailureToServer("적용 전 자동 스냅샷 오류", String((snapE && snapE.message) || snapE), "스냅샷 API 점검, 인메모리 백업으로 계속");
+        }
 
         // 1. 원자적(Atomic) 사전 검증: 하나라도 매치 실패하거나 공백/속성 증발 시 전체 미적용
         let working = current;
@@ -991,6 +1010,7 @@
           const ed = edits[i];
           if (!working.includes(ed.search)) {
             const errMsg = `조각 #${i + 1}(${ed.search.slice(0, 30).replace(/\n/g, " ")}...)이 원본에 없어 전체 미적용 처리됨`;
+            disarmConfirm();
             statusSpan.style.color = "#dc2626";
             statusSpan.innerText = "❌ " + errMsg;
             await logFailureToServer("다조각 원자적 매치 실패", errMsg, "전 조각 원본 재확인 후 자가수복 재요청");
@@ -1000,6 +1020,7 @@
           const wsCheck = verifyClientEditIntegrity(ed.search, ed.replace);
           if (!wsCheck.ok) {
             const errMsg = `조각 #${i + 1} 공백/속성 검증 실패(${wsCheck.reason})로 전체 미적용 처리됨`;
+            disarmConfirm();
             statusSpan.style.color = "#dc2626";
             statusSpan.innerText = "❌ " + errMsg;
             await logFailureToServer("다조각 공백 검증 실패", errMsg, "공백 및 기존 속성 유지하여 재요청");
@@ -1011,10 +1032,21 @@
 
         const check = validatePatchedHtml(working);
         if (!check.ok) {
+          disarmConfirm();
           statusSpan.style.color = "#dc2626";
           statusSpan.innerText = "❌ 검증 실패: " + check.reason + " (전체 미적용)";
           await logFailureToServer("패치 후 HTML/JS 검증 실패", check.reason, "문법 오류 수정 자가수복 재요청");
           await requestSelfHealRetry(originalInstruction || whatLine, check.reason, healAttempt + 1);
+          return;
+        }
+
+        // live 보호 2: 2단계 확정 — 첫 클릭은 검증까지, 두 번째 클릭이 실제 쓰기
+        if (!armedForConfirm) {
+          armedForConfirm = true;
+          applyBtn.innerText = "⚠️ 확정 적용 (다시 클릭)";
+          applyBtn.style.background = "#ea580c";
+          statusSpan.style.color = "#2563eb";
+          statusSpan.innerText = `✅ 검증 통과(${edits.length}조각, 스냅샷済) — 확정하려면 한 번 더 누르세요`;
           return;
         }
 
@@ -1028,6 +1060,7 @@
         if (resData.ok) {
           await loadIndexCode();
           applyBtn.disabled = true;
+          applyBtn.innerText = "✅ 적용됨";
           applyBtn.style.opacity = "0.5";
           applyBtn.style.cursor = "not-allowed";
           undoBtn.disabled = false;
@@ -1037,6 +1070,7 @@
           statusSpan.style.color = "#059669";
           statusSpan.innerText = `✅ 전 조각(${edits.length}개) 원자적 반영됨 (1차 글자·공백 통과)`;
         } else {
+          disarmConfirm();
           const saveErr = resData.error || "저장 오류";
           statusSpan.style.color = "#dc2626";
           statusSpan.innerText = "❌ 저장 실패: " + saveErr;
