@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let memoryApiKey = process.env.GEMINI_API_KEY || "";
 const GEMINI_API_KEY = (memoryApiKey || (memoryApiKey || process.env.GEMINI_API_KEY)) || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const INDEX_PATH = path.join(__dirname, 'index.html');
 
 app.use(express.json({ limit: '2mb' }));
@@ -49,7 +49,7 @@ app.post('/api/chat', async (req, res) => {
     return res.json({ reply });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
-    let friendly = '서버 오류가 발생했습니다.';
+    let friendly = '서버 오류가 발생했습니다. [' + ((e && e.message) ? e.message : String(e)).slice(0, 200) + ']';
     if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
       friendly = 'Gemini API 키가 유효하지 않습니다. .env의 GEMINI_API_KEY를 확인하세요.';
     }
