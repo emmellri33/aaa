@@ -168,20 +168,26 @@ const USER_PROFILE_HEADER = "사용자는 비개발자. 한글로 답한다. 터
 const PATCH_SYSTEM_PROMPT = [
   USER_PROFILE_HEADER,
   "",
-  "당신은 index.html 패치 생성 전용 AI입니다.",
-  "[절대 규칙 — 보기 → 고치기 → 눈 (다조각 & 공백 엄수)]",
+  "당신은 index.html 패치 및 코드 확인 전용 AI입니다.",
+  "[절대 규칙 — 보기(ReAct 도구) → 고치기(다조각) → 눈(공백 엄수)]",
   "1. 마크다운 코드블록(```), 인사말, 잡담을 절대 출력하지 마세요. 오직 유효한 JSON 객체 1개만 출력하세요.",
-  "2. [의도 추론 & 추측 표시] 지시가 다소 막연하더라도 파일 맥락상 합리적으로 추측 가능하면 질문하지 말고 먼저 패치를 제안하되, 추측한 부분에는 반드시 [추측] 표시를 넣으세요. 전혀 알 수 없을 때만 question 타입으로 질문하세요.",
-  "3. [전수 탐색 & 다조각 edits 필수] 패치 전 index.html 전체를 읽고, 대상 선택자·속성·값의 모든 변형(예: 기본 #hello 와 다크모드 body.dark #hello, 미디어쿼리 등)을 전수 탐색하세요. 변형이 여러 곳에 존재하면 절대 1곳만 고치지 말고, 반드시 edits 배열에 모든 조각을 빠짐없이 담아 한 번에 반환하세요.",
-  "4. [공백·줄바꿈·기존 속성 100% 보존] search에는 원본 index.html에 존재하는 글자·들여쓰기 공백·줄바꿈(\n)을 토씨 하나 틀리지 않고 그대로 넣으세요. replace 작성 시에도 수정 대상 값만 바꾸고, 같은 블록 내 다른 속성(예: font-size: 64px;, font-weight: bold; 등)과 줄바꿈·들여쓰기·콜론 뒤 공백을 원본과 100% 똑같이 유지하세요. 속성이나 공백이 증발하면 즉시 거부됩니다.",
-  "5. [증거 인용 & 완료 문구 금지] 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
+  "2. [의도 추론 & 추측 표시] 지시가 다소 막연하더라도 파일 맥락상 합리적으로 추측 가능하면 질문하지 말고 먼저 패치를 제안하되, 추측한 부분에는 반드시 [추측] 표시를 넣으세요. 사용자가 단순 질문(예: 특정 선택자의 색상이 무엇인지 등)을 한 경우에는 패치하지 말고 도구(grep/read)로 확인한 뒤 question 필드에 줄 번호·코드를 인용하여 답변하세요.",
+  "3. [전수 탐색 & 다조각 edits 필수] 패치 전 대상 선택자·속성·값의 모든 변형(예: 기본 선택자와 다크모드 body.dark 변형, 미디어쿼리 등)을 전수 탐색하세요. 변형이 여러 곳에 존재하면 절대 1곳만 고치지 말고, 반드시 edits 배열에 모든 조각을 빠짐없이 담아 한 번에 반환하세요.",
+  "4. [공백·줄바꿈·기존 속성 100% 보존] search에는 원본 index.html에 존재하는 글자·들여쓰기 공백·줄바꿈(\n)을 토씨 하나 틀리지 않고 그대로 넣으세요. replace 작성 시에도 수정 대상 값만 바꾸고, 같은 블록 내 다른 속성(예: font-size: 64px;, font-weight: bold; 등)과 줄바꿈·들여쓰기·콜론 뒤 공백을 원본과 100% 똑같이 유지하세요.",
+  "5. [증거 인용 & 완료 문구 금지] 단정은 반드시 grep·read 결과나 줄 번호 인용과 함께 작성하세요. 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
   "6. [설명 2줄 규격] explanation 필드는 결론 먼저 짧게 반드시 아래 두 줄 형식으로만 작성하세요:",
   "   [뭘] (의도: 사용자 의도 요약) 무엇을 어떻게 바꾸는지 결론 한 줄 (다조각이면 총 몇 곳인지 명시)",
   "   [왜] (근거: 매치된 기존 선택자/코드 인용, 추측 시 [추측] 명시) 바꾸는 이유 한 줄",
-  "7. 지시를 수행할 수 있으면 아래 다조각 JSON 규격만 반환하세요:",
+  "7. [ReAct 도구 호출 규격 (최대 3라운드)] 추가 파일 검색이나 줄 번호/코드 확인이 필요할 때만 아래 JSON 규격으로 도구를 호출하세요 (예시 1개):",
+  "   {\"type\":\"tool_calls\",\"calls\":[{\"tool\":\"grep\",\"args\":{\"pattern\":\"#hello\",\"file\":\"index.html\"}}]}",
+  "   - 사용 가능 도구: grep({pattern, file?}), read({file, start, end}), run({cmd})",
+  "   - 1회차에 이미 받은 전체 코드 내용을 불필요하게 반복 read하지 마세요. 단, 사용자가 질문만 했거나 다른 파일/정확한 줄 번호 인용이 필요하면 grep을 1회 호출해 확인하세요.",
+  "   - 같은 호출 반복 금지. 라운드당 run 도구는 최대 1회만 허용됩니다.",
+  "   - 반드시 3회 안에 patch 또는 question으로 끝내세요. 3회 안에 못 찾겠으면 question에 지금까지 본 것과 필요한 증거를 적으세요.",
+  "8. 지시를 패치로 수행할 수 있으면 아래 다조각 JSON 규격만 반환하세요:",
   "{\"type\":\"patch\",\"explanation\":\"[뭘] (의도: ...) ...\\n[왜] (근거: ...) ...\",\"target\":\"index.html\",\"edits\":[{\"search\":\"원본 조각 1\",\"replace\":\"새 조각 1\"},{\"search\":\"원본 조각 2\",\"replace\":\"새 조각 2\"}]}",
-  "8. 대상이 아예 없거나 전혀 알 수 없을 때만 아래 JSON 규격만 반환하세요:",
-  "{\"type\":\"question\",\"question\":\"[의도 확인] 사용자에게 물어볼 구체적인 질문\"}"
+  "9. 단순 질문에 대한 코드 인용 답변이거나, 대상이 아예 없어 확인이 필요할 때는 아래 JSON 규격만 반환하세요:",
+  "{\"type\":\"question\",\"question\":\"[의도/근거 인용 또는 확인 질문] 구체적인 답변 또는 질문\"}"
 ].join("\n");
 
 function extractJsonString(raw) {
@@ -432,7 +438,7 @@ async function executeReactToolCall(call, seenSignatures = new Set()) {
 
 app.post('/api/ai-modify', async (req, res) => {
   try {
-    const { instruction, target, currentContent, model, images, retryError, testToolCall } = req.body || {};
+    const { instruction, target, currentContent, model, images, retryError, testToolCall, mockResponses } = req.body || {};
     if (testToolCall) {
       const tRes = await executeReactToolCall(testToolCall);
       return res.status(tRes.status || 200).json(tRes);
@@ -444,7 +450,7 @@ app.post('/api/ai-modify', async (req, res) => {
     const htmlSource = currentContent || fs.readFileSync(INDEX_PATH, "utf8");
     const activeKey = getActiveKey();
 
-    if (!activeKey) {
+    if (!activeKey && (!Array.isArray(mockResponses) || mockResponses.length === 0)) {
       const demo = { type: "question", question: "(키 미설정) 어떤 요소를 수정할지 구체적으로 알려주시겠어요?" };
       return res.json({ ok: true, result: JSON.stringify(demo), patch: demo });
     }
@@ -455,64 +461,168 @@ app.post('/api/ai-modify', async (req, res) => {
     const failureNote = failBlock ? "\n\n[과거 실패 일지 (failures.md) — 동일 실수 반복 금지]\n" + failBlock : "";
     const retryNote = retryError ? "\n\n[직전 패치 실패 사유 — 반드시 수정하여 재작성하세요]\n" + retryError : "";
 
-    const ai = new GoogleGenAI({ apiKey: activeKey });
-    const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + "\n\n[현재 index.html 전체 코드]\n" + htmlSource + "\n\n[사용자 지시]\n" + instruction;
+    const ai = activeKey ? new GoogleGenAI({ apiKey: activeKey }) : null;
+    const seenSignatures = new Set();
+    const toolHistoryBlocks = [];
+    const observedSummaries = [];
+    let toolRoundsUsed = 0;
+    const loopStartTime = Date.now();
+    const MAX_ROUNDS = 3;
+    const TIME_LIMIT_MS = 120000;
 
-    console.log("MODIFY start", new Date().toISOString(), "model=" + useModel, retryError ? "(retry)" : "");
-    const response = await ai.models.generateContent({
-      model: useModel,
-      contents: buildMultimodalContents(prompt, images),
-    });
+    let finalParsed = null;
 
-    const jsonStr = extractJsonString(response && response.text ? response.text : "");
-    let parsed = null;
-    try {
-      parsed = JSON.parse(jsonStr);
-    } catch (err) {
-      return res.status(422).json({ ok: false, error: "AI 응답이 유효한 JSON 형식이 아닙니다.", raw: jsonStr });
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      if (Date.now() - loopStartTime > TIME_LIMIT_MS) {
+        recordSecurityOrToolFailure("ReAct 루프 시간 초과(120초)", instruction.slice(0, 80), "질문 카드로 강제 종료");
+        finalParsed = {
+          type: "question",
+          question: "[시간 초과 중단] 도구 탐색이 120초를 초과하여 중단했습니다. 지금까지 확인한 내용: " + (observedSummaries.join(" / ") || "없음") + ". 수정할 위치의 코드 조각을 직접 알려주시겠어요?",
+          toolRounds: toolRoundsUsed
+        };
+        break;
+      }
+
+      // 1회차에만 전체 코드 전달, 2회차부터는 토큰 절약을 위해 생략 문구로 대체
+      const codeSection = (round === 1)
+        ? ("\n\n[현재 index.html 전체 코드]\n" + htmlSource)
+        : "\n\n[현재 index.html 전체 코드]\n(1회차에 이미 전달된 전체 코드는 생략 — 위 1회차 코드 및 아래 도구 결과를 참고하고, 이미 받은 내용은 재조회하지 마세요)";
+
+      const historySection = toolHistoryBlocks.length > 0
+        ? ("\n\n" + toolHistoryBlocks.join("\n\n"))
+        : "";
+
+      const roundHint = (round > 1)
+        ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 같은 도구 호출을 반복하지 말고, 충분한 근거가 모였으면 즉시 patch 또는 question JSON을 출력하세요.")
+        : "";
+
+      const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
+
+      console.log("MODIFY round=" + round, new Date().toISOString(), "model=" + useModel, retryError ? "(retry)" : "");
+
+      let rawText = "";
+      if (Array.isArray(mockResponses) && mockResponses.length >= round) {
+        rawText = typeof mockResponses[round - 1] === "string"
+          ? mockResponses[round - 1]
+          : JSON.stringify(mockResponses[round - 1]);
+      } else {
+        const response = await ai.models.generateContent({
+          model: useModel,
+          contents: buildMultimodalContents(prompt, round === 1 ? images : []),
+        });
+        rawText = (response && response.text) ? response.text : "";
+      }
+
+      const jsonStr = extractJsonString(rawText);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (err) {
+        return res.status(422).json({ ok: false, error: "AI 응답이 유효한 JSON 형식이 아닙니다.", raw: jsonStr });
+      }
+
+      if (parsed.type === "patch" || parsed.type === "question") {
+        finalParsed = parsed;
+        break;
+      }
+
+      if (parsed.type === "tool_calls" && Array.isArray(parsed.calls) && parsed.calls.length > 0) {
+        if (round === MAX_ROUNDS) {
+          // 3회차에서도 patch/question이 안 나오면 강제 question 종료
+          recordSecurityOrToolFailure("ReAct 3회차 초과 미결", instruction.slice(0, 80), "3회 탐색 후 question 종료");
+          finalParsed = {
+            type: "question",
+            question: "3번 봐도 못 찾음 — 지금까지 본 것: [" + (observedSummaries.join("; ") || "도구 호출 시도") + "]. 필요한 증거: 수정하려는 대상의 정확한 선택자나 텍스트 조각을 붙여주시겠어요?",
+            toolRounds: toolRoundsUsed
+          };
+          break;
+        }
+
+        toolRoundsUsed++;
+        let runCountInRound = 0;
+        const roundOutputs = [];
+
+        for (let cIdx = 0; cIdx < parsed.calls.length; cIdx++) {
+          const callObj = parsed.calls[cIdx];
+          const toolName = String((callObj && callObj.tool) || "").trim();
+
+          if (toolName === "run") {
+            runCountInRound++;
+            if (runCountInRound > 1) {
+              roundOutputs.push("[call #" + (cIdx + 1) + " run 제한] 라운드당 run 도구는 1회만 허용되어 생략되었습니다.");
+              continue;
+            }
+          }
+
+          const tRes = await executeReactToolCall(callObj, seenSignatures);
+          if (!tRes.ok && (tRes.status === 400 || tRes.status === 422)) {
+            return res.status(tRes.status).json({ ok: false, error: tRes.error });
+          }
+
+          const summaryLabel = toolName + "(" + JSON.stringify((callObj && callObj.args) || {}) + ")";
+          observedSummaries.push(summaryLabel + " -> " + String(tRes.output || "").split("\n")[0].slice(0, 60));
+          roundOutputs.push("▶ " + summaryLabel + "\n" + String(tRes.output || tRes.error || "(출력 없음)"));
+        }
+
+        toolHistoryBlocks.push("[도구 결과 " + round + "회차]\n" + roundOutputs.join("\n---\n"));
+        continue;
+      }
+
+      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + parsed.type, patch: parsed });
     }
 
-    if (parsed.type === "patch") {
-      parsed.target = "index.html";
-      // 다조각(edits) 및 단일(search/replace) 양방향 하위호환 정규화
+    if (!finalParsed) {
+      finalParsed = {
+        type: "question",
+        question: "3번 봐도 못 찾음 — 지금까지 본 것: [" + (observedSummaries.join("; ") || "없음") + "]. 필요한 증거: 대상 요소의 정확한 이름이나 코드를 알려주시겠어요?",
+        toolRounds: toolRoundsUsed
+      };
+    }
+
+    if (toolRoundsUsed > 0) {
+      finalParsed.toolRounds = toolRoundsUsed;
+    }
+
+    if (finalParsed.type === "patch") {
+      finalParsed.target = "index.html";
       let rawEdits = [];
-      if (Array.isArray(parsed.edits) && parsed.edits.length > 0) {
-        rawEdits = parsed.edits;
-      } else if (typeof parsed.search === "string" && typeof parsed.replace === "string") {
-        rawEdits = [{ search: parsed.search, replace: parsed.replace }];
+      if (Array.isArray(finalParsed.edits) && finalParsed.edits.length > 0) {
+        rawEdits = finalParsed.edits;
+      } else if (typeof finalParsed.search === "string" && typeof finalParsed.replace === "string") {
+        rawEdits = [{ search: finalParsed.search, replace: finalParsed.replace }];
       } else {
-        return res.status(422).json({ ok: false, error: "patch JSON에 edits 배열 또는 search/replace 필드가 누락되었습니다.", patch: parsed });
+        return res.status(422).json({ ok: false, error: "patch JSON에 edits 배열 또는 search/replace 필드가 누락되었습니다.", patch: finalParsed });
       }
 
       for (let i = 0; i < rawEdits.length; i++) {
         const ed = rawEdits[i];
         if (!ed || typeof ed.search !== "string" || !ed.search || typeof ed.replace !== "string") {
-          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + "의 search/replace 형식이 올바르지 않습니다.", patch: parsed });
+          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + "의 search/replace 형식이 올바르지 않습니다.", patch: finalParsed });
         }
         const wsCheck = checkWhitespaceAndProps(ed.search, ed.replace);
         if (!wsCheck.ok) {
-          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + " 공백/속성 검증 실패: " + wsCheck.reason, patch: parsed });
+          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + " 공백/속성 검증 실패: " + wsCheck.reason, patch: finalParsed });
         }
       }
 
-      parsed.edits = rawEdits;
-      parsed.search = rawEdits[0].search;
-      parsed.replace = rawEdits[0].replace;
+      finalParsed.edits = rawEdits;
+      finalParsed.search = rawEdits[0].search;
+      finalParsed.replace = rawEdits[0].replace;
 
-      const exp = String(parsed.explanation || "").trim();
+      const exp = String(finalParsed.explanation || "").trim();
       if (!exp.includes("[뭘]") || !exp.includes("[왜]")) {
         const lines = exp.split("\n").filter(Boolean);
-        parsed.explanation = "[뭘] " + (lines[0] || "요청하신 코드 조각 수정") + "\n[왜] " + (lines[1] || "사용자 지시 반영을 위해 수정");
+        finalParsed.explanation = "[뭘] " + (lines[0] || "요청하신 코드 조각 수정") + "\n[왜] " + (lines[1] || "사용자 지시 반영을 위해 수정");
       }
-    } else if (parsed.type === "question") {
-      if (typeof parsed.question !== "string") {
-        return res.status(422).json({ ok: false, error: "question JSON에 question 필드가 누락되었습니다.", patch: parsed });
+    } else if (finalParsed.type === "question") {
+      if (typeof finalParsed.question !== "string") {
+        return res.status(422).json({ ok: false, error: "question JSON에 question 필드가 누락되었습니다.", patch: finalParsed });
       }
     } else {
-      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + parsed.type, patch: parsed });
+      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + finalParsed.type, patch: finalParsed });
     }
 
-    return res.json({ ok: true, result: JSON.stringify(parsed), patch: parsed });
+    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';
