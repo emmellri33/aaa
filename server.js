@@ -216,9 +216,227 @@ function checkWhitespaceAndProps(searchStr, replaceStr) {
   return { ok: true };
 }
 
+// --- ReAct 도구 실행부 (grep / read / run) & 보안 가드 ---
+const ALLOWED_TOOL_FILES = ["index.html", "blank.html", "server.js", "failures.md", "memory.json", "package.json"];
+
+function recordSecurityOrToolFailure(what, why, how) {
+  try {
+    const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
+    const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const row = "| " + ts + " | " + clean(what) + " | " + clean(why) + " | " + clean(how) + " |\n";
+    if (!fs.existsSync(FAILURES_PATH)) {
+      fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+    }
+    fs.appendFileSync(FAILURES_PATH, row, "utf8");
+  } catch (e) {}
+}
+
+function hasSensitiveKeyword(str) {
+  const raw = String(str || "");
+  const low = raw.toLowerCase();
+  return (
+    low.includes(".env") ||
+    raw.includes("키") ||
+    low.includes("apikey") ||
+    low.includes("api_key") ||
+    low.includes("gemini_api_key") ||
+    low.includes("memoryapikey") ||
+    low.includes("node_modules")
+  );
+}
+
+function isAllowedToolFile(name) {
+  const n = String(name || "").trim();
+  if (!n || isForbiddenFileName(n)) return false;
+  return ALLOWED_TOOL_FILES.includes(n);
+}
+
+function runAllowedCommandAsync(rawCmd) {
+  return new Promise((resolve) => {
+    const cmd = String(rawCmd || "").trim();
+    if (!cmd) {
+      return resolve({ ok: false, status: 400, error: "명령어가 비어 있습니다." });
+    }
+    const chainChars = [";", "&&", "||", "|", "`", "$(", ">", "<", "\n", "\r"];
+    if (chainChars.some(ch => cmd.includes(ch))) {
+      recordSecurityOrToolFailure("run 도구 셸 이어붙이기 차단", cmd, "단일 allowlist 명령만 허용");
+      return resolve({ ok: false, status: 400, error: "거부됨(400): 셸 이어붙이기 및 리다이렉션 금지" });
+    }
+    const lowCmd = cmd.toLowerCase();
+    if (
+      lowCmd.includes(".env") ||
+      cmd.includes("키") ||
+      lowCmd.includes("key") ||
+      lowCmd.includes("gemini") ||
+      lowCmd.includes("memoryapikey")
+    ) {
+      recordSecurityOrToolFailure("run 도구 기밀 키워드 차단", cmd, ".env·키·GEMINI 접근 금지");
+      return resolve({ ok: false, status: 400, error: "거부됨(400): 보안 정책상 .env·키·GEMINI 관련 명령 금지" });
+    }
+
+    let bin = "";
+    let args = [];
+    if (cmd === "git status") {
+      bin = "git";
+      args = ["status"];
+    } else if (cmd === "git log --oneline -5") {
+      bin = "git";
+      args = ["log", "--oneline", "-5"];
+    } else if (
+      cmd === "tail /tmp/server.log" ||
+      cmd === "tail -n 20 /tmp/server.log" ||
+      cmd === "tail -n 50 /tmp/server.log" ||
+      cmd === "tail 로그"
+    ) {
+      bin = "tail";
+      args = ["-n", "30", "/tmp/server.log"];
+    } else if (
+      cmd === "curl health" ||
+      cmd === "curl http://localhost:3000/health" ||
+      cmd === "curl -s http://localhost:3000/health" ||
+      cmd === "curl localhost:3000/health"
+    ) {
+      bin = "curl";
+      args = ["-s", "http://localhost:3000/health"];
+    } else if (cmd.startsWith("grep ")) {
+      const tokens = cmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+      const cleanTokens = tokens.slice(1).map(t => t.replace(/^["']|["']$/g, ""));
+      if (cleanTokens.length < 2) {
+        return resolve({ ok: false, status: 400, error: "거부됨(400): grep 사용법: grep [옵션] 패턴 파일명" });
+      }
+      const targetFile = cleanTokens[cleanTokens.length - 1];
+      if (!isAllowedToolFile(targetFile)) {
+        recordSecurityOrToolFailure("run grep 허용 외 파일 차단", targetFile, "ALLOWED_TOOL_FILES만 허용");
+        return resolve({ ok: false, status: 400, error: "거부됨(400): grep 대상 파일은 allowlist 파일만 허용됩니다." });
+      }
+      const flags = cleanTokens.slice(0, -2);
+      if (flags.some(f => !["-n", "-i", "-E", "-F", "-c", "-nE", "-ni"].includes(f))) {
+        return resolve({ ok: false, status: 400, error: "거부됨(400): 허용되지 않은 grep 옵션입니다." });
+      }
+      bin = "grep";
+      args = cleanTokens;
+    } else {
+      recordSecurityOrToolFailure("run allowlist 외 명령 차단", cmd, "읽기 전용 allowlist 명령만 허용");
+      return resolve({ ok: false, status: 400, error: "거부됨(400): allowlist 외 명령입니다." });
+    }
+
+    execFile(bin, args, { cwd: __dirname, timeout: 5000 }, (err, stdout, stderr) => {
+      const combined = (String(stdout || "") + (stderr ? "\n" + String(stderr) : "")).trim();
+      const truncated = combined.length > 2000 ? combined.slice(0, 2000) + "\n...(2000자 절단됨)" : combined;
+      if (err && err.code !== 1) {
+        return resolve({ ok: false, status: 200, output: (truncated || err.message).slice(0, 2000) });
+      }
+      resolve({ ok: true, status: 200, output: truncated || "(출력 없음)" });
+    });
+  });
+}
+
+async function executeReactToolCall(call, seenSignatures = new Set()) {
+  if (!call || typeof call !== "object") {
+    return { ok: false, status: 400, error: "유효하지 않은 tool_call 형식입니다." };
+  }
+  const tool = String(call.tool || "").trim();
+  const args = (call.args && typeof call.args === "object") ? call.args : call;
+
+  // 1. 쓰기 도구 및 미지원 도구 호출 시 즉시 422 + 실패일지 기록
+  if (!["grep", "read", "run"].includes(tool)) {
+    const msg = "거부됨(422): 쓰기 또는 허용되지 않은 도구 호출 금지 (" + (tool || "unknown") + ")";
+    recordSecurityOrToolFailure("허용 외 도구 호출 차단(422)", "tool=" + tool, "쓰기는 패치 카드 경로만 허용");
+    return { ok: false, status: 422, error: msg };
+  }
+
+  // 중복 호출 방지용 시그니처 체크
+  const sig = tool + ":" + JSON.stringify(args);
+  if (seenSignatures.has(sig)) {
+    return { ok: true, status: 200, tool, output: "(이미 동일한 내용 조회함 — 중복 호출 생략)" };
+  }
+  seenSignatures.add(sig);
+
+  // 2. grep: { pattern, file? }
+  if (tool === "grep") {
+    const pattern = String(args.pattern || "").trim();
+    const targetFile = args.file ? String(args.file).trim() : "index.html";
+    if (!pattern) {
+      return { ok: false, status: 400, error: "거부됨(400): grep pattern이 비어 있습니다." };
+    }
+    if (hasSensitiveKeyword(pattern) || hasSensitiveKeyword(targetFile) || !isAllowedToolFile(targetFile)) {
+      const msg = "거부됨(400): allowlist 밖이거나 기밀 파일/키워드 접근 금지 (" + targetFile + ")";
+      recordSecurityOrToolFailure("grep 금지 파일/키워드 차단(400)", "file=" + targetFile + " pattern=" + pattern, "allowlist 파일만 검색");
+      return { ok: false, status: 400, error: msg };
+    }
+    const fullPath = path.join(__dirname, targetFile);
+    if (!fs.existsSync(fullPath)) {
+      return { ok: true, status: 200, tool, output: "(파일 없음: " + targetFile + ")" };
+    }
+    const lines = fs.readFileSync(fullPath, "utf8").split("\n");
+    let re = null;
+    try {
+      re = new RegExp(pattern, "i");
+    } catch (e) {
+      re = null;
+    }
+    const hits = [];
+    lines.forEach((line, idx) => {
+      const matched = re ? re.test(line) : line.toLowerCase().includes(pattern.toLowerCase());
+      if (matched) {
+        hits.push(targetFile + ":" + (idx + 1) + ": " + line);
+      }
+    });
+    const out = hits.length > 0 ? hits.join("\n") : "(매치 결과 없음: " + pattern + ")";
+    return {
+      ok: true,
+      status: 200,
+      tool,
+      output: out.length > 2000 ? out.slice(0, 2000) + "\n...(2000자 절단됨)" : out
+    };
+  }
+
+  // 3. read: { file, start, end } (1회 최대 200줄)
+  if (tool === "read") {
+    const targetFile = String(args.file || "").trim();
+    if (!targetFile || hasSensitiveKeyword(targetFile) || !isAllowedToolFile(targetFile)) {
+      const msg = "거부됨(400): allowlist 밖이거나 접근 금지된 파일입니다 (" + (targetFile || "empty") + ")";
+      recordSecurityOrToolFailure("read 금지 파일 차단(400)", "file=" + targetFile, "allowlist 파일만 read 허용");
+      return { ok: false, status: 400, error: msg };
+    }
+    const fullPath = path.join(__dirname, targetFile);
+    if (!fs.existsSync(fullPath)) {
+      return { ok: false, status: 404, error: "파일이 존재하지 않습니다: " + targetFile };
+    }
+    const lines = fs.readFileSync(fullPath, "utf8").split("\n");
+    const startLine = Math.max(1, parseInt(args.start, 10) || 1);
+    const rawEnd = parseInt(args.end, 10) || (startLine + 199);
+    const endLine = Math.min(lines.length, Math.min(startLine + 199, Math.max(startLine, rawEnd)));
+    const slice = lines.slice(startLine - 1, endLine).map((l, i) => (startLine + i) + ": " + l).join("\n");
+    const out = "[" + targetFile + " " + startLine + "~" + endLine + "줄]\n" + slice;
+    return {
+      ok: true,
+      status: 200,
+      tool,
+      output: out.length > 2000 ? out.slice(0, 2000) + "\n...(2000자 절단됨)" : out
+    };
+  }
+
+  // 4. run: { cmd }
+  if (tool === "run") {
+    const cmd = String(args.cmd || args.command || "").trim();
+    const res = await runAllowedCommandAsync(cmd);
+    if (!res.ok && res.status === 400) {
+      return { ok: false, status: 400, error: res.error };
+    }
+    return { ok: true, status: 200, tool, output: res.output };
+  }
+
+  return { ok: false, status: 422, error: "알 수 없는 도구입니다." };
+}
+
 app.post('/api/ai-modify', async (req, res) => {
   try {
-    const { instruction, target, currentContent, model, images, retryError } = req.body || {};
+    const { instruction, target, currentContent, model, images, retryError, testToolCall } = req.body || {};
+    if (testToolCall) {
+      const tRes = await executeReactToolCall(testToolCall);
+      return res.status(tRes.status || 200).json(tRes);
+    }
     if (!instruction || !target) return res.status(400).json({ error: 'instruction and target required' });
 
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
