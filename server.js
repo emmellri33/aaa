@@ -259,6 +259,238 @@ app.post("/api/key", (req, res) => {
   res.json({ ok: true, hasKey: Boolean(memoryApiKey) });
 });
 
+// --- 기억 파일 (memory.json) GET / POST ---
+app.get('/api/memory', (req, res) => {
+  try {
+    const facts = readMemoryFacts();
+    res.json({ ok: true, facts, content: JSON.stringify({ facts }, null, 2) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/memory', (req, res) => {
+  try {
+    const { facts, addFacts, rawJson } = req.body || {};
+    let nextFacts = readMemoryFacts();
+    if (typeof rawJson === "string") {
+      const parsed = JSON.parse(rawJson);
+      if (!Array.isArray(parsed.facts)) {
+        return res.status(400).json({ ok: false, error: "memory.json은 { \"facts\": [...] } 형식이어야 합니다." });
+      }
+      nextFacts = parsed.facts.map(x => String(x).trim()).filter(Boolean);
+    } else if (Array.isArray(facts)) {
+      nextFacts = facts.map(x => String(x).trim()).filter(Boolean);
+    } else if (Array.isArray(addFacts)) {
+      addFacts.forEach(item => {
+        const clean = String(item || "").trim();
+        if (clean && !nextFacts.includes(clean)) nextFacts.push(clean);
+      });
+    } else {
+      return res.status(400).json({ ok: false, error: "facts 또는 addFacts가 필요합니다." });
+    }
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify({ facts: nextFacts }, null, 2) + "\n", "utf8");
+    res.json({ ok: true, facts: nextFacts });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// --- 실패 일지 (failures.md) GET / POST ---
+app.get('/api/failures', (req, res) => {
+  try {
+    const content = fs.existsSync(FAILURES_PATH) ? fs.readFileSync(FAILURES_PATH, "utf8") : "";
+    res.json({ ok: true, content });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/failures', (req, res) => {
+  try {
+    const { when, what, why, how } = req.body || {};
+    const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
+    const ts = clean(when || new Date().toISOString().slice(0, 16).replace("T", " "));
+    const row = "| " + ts + " | " + clean(what) + " | " + clean(why) + " | " + clean(how) + " |\n";
+    if (!fs.existsSync(FAILURES_PATH)) {
+      fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+    }
+    fs.appendFileSync(FAILURES_PATH, row, "utf8");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// --- 폴더 파일 목록 & 읽기 (/api/files) ---
+function isForbiddenFileName(name) {
+  const n = String(name || "");
+  const low = n.toLowerCase();
+  if (!n || n.includes("..") || n.includes("/") || n.includes("\\")) return true;
+  if (n.startsWith(".") || low.includes(".env") || low.includes("key") || n === "node_modules") return true;
+  return false;
+}
+
+app.get('/api/files', (req, res) => {
+  try {
+    const entries = fs.readdirSync(__dirname, { withFileTypes: true });
+    const files = entries
+      .filter(e => e.isFile() && !isForbiddenFileName(e.name))
+      .map(e => {
+        const stat = fs.statSync(path.join(__dirname, e.name));
+        return { name: e.name, size: stat.size };
+      });
+    res.json({ ok: true, files });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/files/read', (req, res) => {
+  try {
+    const name = String((req.query && req.query.name) || "").trim();
+    if (isForbiddenFileName(name)) {
+      return res.status(400).json({ ok: false, error: "접근이 금지된 파일입니다." });
+    }
+    const targetPath = path.join(__dirname, name);
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ ok: false, error: "파일이 존재하지 않습니다." });
+    }
+    const content = fs.readFileSync(targetPath, "utf8").slice(0, 20000);
+    res.json({ ok: true, name, content });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// --- 읽기 전용 터미널 실행 (/api/run) ---
+app.post('/api/run', (req, res) => {
+  const rawCmd = String((req.body && req.body.command) || "").trim();
+  if (!rawCmd) return res.status(400).json({ ok: false, error: "명령어를 입력하세요." });
+
+  // 1. 셸 이어붙이기·리다이렉션 금지
+  const chainChars = [";", "&&", "||", "|", "`", "$(", ">", "<", "\n", "\r"];
+  if (chainChars.some(ch => rawCmd.includes(ch))) {
+    return res.status(400).json({ ok: false, error: "거부됨: 셸 이어붙이기 및 리다이렉션은 금지되어 있습니다." });
+  }
+
+  // 2. 민감 키워드(.env, 키, GEMINI, memoryApiKey) 절대 금지
+  const lowCmd = rawCmd.toLowerCase();
+  if (
+    lowCmd.includes(".env") ||
+    rawCmd.includes("키") ||
+    lowCmd.includes("key") ||
+    lowCmd.includes("gemini") ||
+    lowCmd.includes("memoryapikey")
+  ) {
+    return res.status(400).json({ ok: false, error: "거부됨: 보안 정책상 .env·키·GEMINI 관련 명령은 실행할 수 없습니다." });
+  }
+
+  // 3. 읽기 전용 Allowlist 검사
+  let bin = "";
+  let args = [];
+
+  if (rawCmd === "git status") {
+    bin = "git";
+    args = ["status"];
+  } else if (rawCmd === "git log --oneline -5") {
+    bin = "git";
+    args = ["log", "--oneline", "-5"];
+  } else if (
+    rawCmd === "tail /tmp/server.log" ||
+    rawCmd === "tail -n 20 /tmp/server.log" ||
+    rawCmd === "tail -n 50 /tmp/server.log" ||
+    rawCmd === "tail 로그"
+  ) {
+    bin = "tail";
+    args = ["-n", "30", "/tmp/server.log"];
+  } else if (
+    rawCmd === "curl health" ||
+    rawCmd === "curl http://localhost:3000/health" ||
+    rawCmd === "curl -s http://localhost:3000/health" ||
+    rawCmd === "curl localhost:3000/health"
+  ) {
+    bin = "curl";
+    args = ["-s", "http://localhost:3000/health"];
+  } else if (rawCmd.startsWith("grep ")) {
+    const tokens = rawCmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+    const cleanTokens = tokens.slice(1).map(t => t.replace(/^["']|["']$/g, ""));
+    if (cleanTokens.length < 2) {
+      return res.status(400).json({ ok: false, error: "거부됨: grep 사용법: grep [옵션] 패턴 파일명" });
+    }
+    const targetFile = cleanTokens[cleanTokens.length - 1];
+    const allowedGrepFiles = ["index.html", "blank.html", "server.js", "failures.md", "memory.json", "package.json"];
+    if (!allowedGrepFiles.includes(targetFile)) {
+      return res.status(400).json({ ok: false, error: "거부됨: grep 대상 파일은 워크스페이스 일반 파일만 허용됩니다." });
+    }
+    const flags = cleanTokens.slice(0, -2);
+    if (flags.some(f => !["-n", "-i", "-E", "-F", "-c", "-nE", "-ni"].includes(f))) {
+      return res.status(400).json({ ok: false, error: "거부됨: 허용되지 않은 grep 옵션입니다." });
+    }
+    bin = "grep";
+    args = cleanTokens;
+  } else {
+    return res.status(400).json({
+      ok: false,
+      error: "거부됨(allowlist 외): 허용 명령은 [git status], [git log --oneline -5], [tail /tmp/server.log], [curl health], [grep ... 파일명] 뿐입니다."
+    });
+  }
+
+  execFile(bin, args, { cwd: __dirname, timeout: 5000 }, (err, stdout, stderr) => {
+    const combined = (String(stdout || "") + (stderr ? "\n" + String(stderr) : "")).trim();
+    const truncated = combined.length > 2000 ? combined.slice(0, 2000) + "\n...(2000자 절단됨)" : combined;
+    if (err && err.code !== 1) {
+      return res.json({ ok: false, output: (truncated || err.message).slice(0, 2000) });
+    }
+    res.json({ ok: true, output: truncated || "(출력 없음)" });
+  });
+});
+
+// --- 스냅샷 한 방 (/api/snapshot: add -> commit -> push) ---
+function runGitStep(args) {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd: __dirname, timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        const out = (String(stdout || "") + " " + String(stderr || "")).trim();
+        return reject(new Error(out || err.message));
+      }
+      resolve((String(stdout || "") + " " + String(stderr || "")).trim());
+    });
+  });
+}
+
+app.post('/api/snapshot', async (req, res) => {
+  try {
+    await runGitStep(["add", "-A"]);
+    const statusOut = await runGitStep(["status", "--short"]);
+    const changedCount = statusOut ? statusOut.split("\n").filter(Boolean).length : 0;
+    const stamp = new Date().toISOString().slice(0, 19).replace("T", " ");
+    const commitMsg = "snapshot: " + stamp + " (" + changedCount + " files)";
+
+    let commitResult = "";
+    try {
+      commitResult = await runGitStep(["commit", "-m", commitMsg]);
+    } catch (commitErr) {
+      if (!String(commitErr.message).includes("nothing to commit")) {
+        throw commitErr;
+      }
+      commitResult = "변경사항 없음(기존 커밋 유지)";
+    }
+
+    let pushResult = "push 완료";
+    try {
+      await runGitStep(["push"]);
+    } catch (pushErr) {
+      pushResult = "로컬 커밋 완료 (push 알림: " + String(pushErr.message).slice(0, 80) + ")";
+    }
+
+    const line = "📸 스냅샷 완료 [" + commitMsg + "] — " + pushResult;
+    res.json({ ok: true, summary: line });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "스냅샷 실패: " + String(e.message).slice(0, 200) });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
