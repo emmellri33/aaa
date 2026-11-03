@@ -1,0 +1,6 @@
+{
+  "facts": [
+    "작업 디렉토리는 /workspaces/aaa 이며 편집 대상은 index.html 이다.",
+    "기본 모델은 gemini-3.5-flash-lite 이다."
+  ]
+}
