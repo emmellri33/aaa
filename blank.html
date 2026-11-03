@@ -18,7 +18,7 @@
     .key-bar button { background: #2563eb; color: #fff; border: none; border-radius: 12px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
     
     /* 메인 컨테이너 */
-    .container { flex: 1; display: flex; max-width: 1000px; width: 100%; margin: 0 auto; overflow: hidden; padding: 16px 20px 24px; gap: 16px; }
+    .container { flex: 1; display: flex; max-width: 100%; width: 100%; margin: 0 auto; overflow: hidden; padding: 16px 20px 24px; gap: 16px; }
     
     /* 채팅창 메인 */
     .chat-panel { flex: 1; display: flex; flex-direction: column; background: #fff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); overflow: hidden; }
@@ -58,11 +58,12 @@
     .send-btn { background: #2563eb; color: #fff; border-radius: 50%; width: 32px; height: 32px; justify-content: center; font-size: 14px; }
     .send-btn:hover { background: #1d4ed8; color: #fff; }
 
-    /* 접이식 컨텍스트 검사기 */
-    .side-panel { width: 300px; display: flex; flex-direction: column; gap: 12px; }
-    details { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; font-size: 13px; }
-    summary { cursor: pointer; font-weight: 600; color: #334155; }
-    #contextText { width: 100%; height: 260px; margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; font-size: 12px; font-family: monospace; }
+    /* 우측 코드 + 미리보기 분할 패널 */
+    .side-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+    .split-card { flex: 1; display: flex; flex-direction: column; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; overflow: hidden; }
+    .split-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 8px; }
+    #contextText { flex: 1; width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; font-size: 12px; font-family: monospace; resize: none; }
+    #indexPreview { flex: 1; width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
   </style>
 </head>
 <body>
@@ -127,13 +128,21 @@
       </div>
     </div>
 
-    <!-- 사이드 컨텍스트 점검 패널 -->
+    <!-- 우측 코드 + 실시간 미리보기 패널 -->
     <div class="side-panel">
-      <details>
-        <summary>🔍 index.html 실시간 코드 확인</summary>
-        <button id="reloadIndexBtn" style="margin-top: 8px; padding: 4px 8px; font-size: 12px; cursor: pointer;">새로고침</button>
+      <div class="split-card">
+        <div class="split-header">
+          <span>📄 index.html 소스 코드</span>
+          <button id="reloadIndexBtn" style="padding: 4px 10px; font-size: 12px; cursor: pointer; border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 6px;">새로고침</button>
+        </div>
         <textarea id="contextText" readonly placeholder="불러오는 중..."></textarea>
-      </details>
+      </div>
+      <div class="split-card">
+        <div class="split-header">
+          <span>🖥️ index.html 실시간 미리보기</span>
+        </div>
+        <iframe id="indexPreview" src="index.html"></iframe>
+      </div>
     </div>
   </div>
 
@@ -170,6 +179,8 @@
         const r = await fetch('/api/page/index');
         const d = await r.json();
         contextText.value = d.content || '';
+        const frame = document.getElementById('indexPreview');
+        if (frame) frame.src = 'index.html?t=' + Date.now();
       } catch {}
     }
     loadIndexCode();
