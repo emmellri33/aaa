@@ -4,23 +4,21 @@
   <meta charset="UTF-8">
   <title>Blank</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; line-height: 1.5; }
+    body { font-family: sans-serif; padding: 24px; max-width: 800px; margin: 0 auto; line-height: 1.5; color: #1e293b; }
     .nav-btns { margin-bottom: 20px; display: flex; gap: 8px; }
-    .nav-btns button { padding: 8px 12px; cursor: pointer; }
-    .box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; margin-bottom: 20px; background: #fff; }
-    .key-bar { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; margin-bottom: 16px; display: flex; gap: 8px; align-items: center; }
-    .key-bar input { flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; }
-    .key-bar button { padding: 6px 12px; cursor: pointer; background: #2563eb; color: #fff; border: none; border-radius: 4px; }
-    .chat-messages { height: 220px; border: 1px solid #e2e8f0; padding: 12px; overflow-y: auto; border-radius: 6px; margin-bottom: 12px; background: #fafafa; }
-    .msg { margin-bottom: 8px; }
-    .msg.user { color: #1e40af; font-weight: bold; }
-    .msg.ai { color: #0f172a; }
-    .chat-controls { display: flex; gap: 8px; margin-bottom: 8px; }
-    .chat-controls select { padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1; }
-    .input-row { display: flex; gap: 8px; }
-    .input-row input { flex: 1; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; }
-    .input-row button { padding: 8px 16px; cursor: pointer; }
-    textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 6px; }
+    .nav-btns button { padding: 8px 14px; cursor: pointer; border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; }
+    .box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 20px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .key-bar { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 10px; align-items: center; }
+    .key-bar input { flex: 1; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    .key-bar button { padding: 8px 16px; cursor: pointer; background: #2563eb; color: #fff; border: none; border-radius: 6px; font-weight: 500; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+    select, input[type="text"], textarea { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }
+    textarea { resize: vertical; }
+    .btn-row { display: flex; gap: 10px; margin-top: 14px; }
+    .btn-row button { padding: 10px 16px; cursor: pointer; border-radius: 6px; font-size: 14px; border: 1px solid #cbd5e1; background: #fff; }
+    .btn-row .primary-btn { background: #059669; color: #fff; border: none; font-weight: 600; }
+    #logOutput { margin-top: 14px; padding: 10px; border-radius: 6px; background: #f1f5f9; font-size: 13px; min-height: 40px; white-space: pre-wrap; display: none; }
   </style>
 </head>
 <body>
@@ -30,179 +28,175 @@
     <button onclick="location.href='index.html'">index.html로 돌아가기</button>
   </div>
 
-  <!-- 1. API 키 서버 안전 등록 바 -->
+  <!-- 1. API 키 서버 안전 등록 -->
   <div class="key-bar">
     <label><strong>🔑 Gemini API 키:</strong></label>
-    <input type="password" id="apiKeyInput" placeholder="서버 메모리에 안전 저장할 API 키 입력 (새로고침 시 자동 보호)" />
+    <input type="password" id="apiKeyInput" placeholder="서버 메모리에 보관할 API 키 입력 (새로고침 시 입력창 초기화)" />
     <button id="saveKeyBtn">서버 등록</button>
     <span id="keyStatus" style="font-size: 13px; color: #64748b;">확인 중...</span>
   </div>
 
-  <!-- 2. AI 채팅 영역 (모델 선택 복구) -->
+  <!-- 2. AI 통합 프롬프트 & 페이지 수정 컨트롤 -->
   <div class="box">
-    <h2>간단한 채팅 (AI)</h2>
-    <div class="chat-controls">
-      <label for="modelSelect">모델 선택:</label>
+    <h2>AI 페이지 & 프롬프트 컨트롤</h2>
+    <p style="font-size: 13px; color: #64748b; margin-top: -6px; margin-bottom: 16px;">
+      수정 지시나 질문을 입력하면 선택한 Gemini 모델이 프롬프트를 보정하거나 <code>index.html</code> 파일을 직접 갱신합니다.
+    </p>
+
+    <!-- 모델 선택 -->
+    <div class="form-group">
+      <label for="modelSelect">사용할 AI 모델</label>
       <select id="modelSelect">
-        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+        <option value="gemini-2.5-flash">Gemini 2.5 Flash (추천: 빠른 속도)</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+        <option value="gemini-1.5-pro">Gemini 1.5 Pro (고성능 추론)</option>
       </select>
     </div>
 
-    <details style="margin-bottom: 12px;">
-      <summary style="cursor: pointer; color: #475569;">프롬프트 / 페이지 컨텍스트 편집</summary>
-      <textarea id="promptContext" rows="3"></textarea>
-    </details>
-
-    <div class="chat-messages" id="chatMessages"></div>
-
-    <div class="input-row">
-      <input type="text" id="chatInput" placeholder="메시지를 입력하세요" />
-      <button id="chatSend">전송</button>
-    </div>
-  </div>
-
-  <!-- 3. 클라인이 만든 페이지 직접 수정 섹션 유지 -->
-  <div class="box">
-    <h3>AI 페이지/프롬프트 직접 수정</h3>
-    <p style="font-size: 13px; color: #475569;">빈 페이지 1의 AI가 <code>index.html</code> 또는 프롬프트를 직접 수정하여 서버에 반영합니다.</p>
-    
-    <label>대상:</label>
-    <select id="modifyTarget">
-      <option value="index">index.html (메인 hello 페이지)</option>
-      <option value="prompt">프롬프트 (페이지 컨텍스트)</option>
-    </select>
-
-    <div style="margin-top: 8px;">
-      <label>수정 지시:</label>
-      <input type="text" id="modifyInstruction" placeholder="예: hello를 안녕하세요로 바꿔줘" style="width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px;" />
+    <!-- 수정 대상 -->
+    <div class="form-group">
+      <label for="modifyTarget">작업 대상</label>
+      <select id="modifyTarget">
+        <option value="prompt">프롬프트 (페이지 컨텍스트/대화)</option>
+        <option value="index">index.html (메인 hello 페이지 파일)</option>
+      </select>
     </div>
 
-    <div style="margin-top: 8px;">
-      <label>현재 내용 (참고):</label>
-      <textarea id="modifyPreview" rows="4" readonly></textarea>
+    <!-- 지시 입력란 -->
+    <div class="form-group">
+      <label for="modifyInstruction">지시 / 대화 입력</label>
+      <input type="text" id="modifyInstruction" placeholder="예: 버튼 색상을 초록색으로 바꿔줘 / hello를 안녕하세요로 변경해줘" />
     </div>
 
-    <div style="margin-top: 10px; display: flex; gap: 8px;">
-      <button id="loadContentBtn" style="padding: 6px 12px; cursor: pointer;">현재 내용 불러오기</button>
-      <button id="applyModifyBtn" style="padding: 6px 12px; cursor: pointer; background: #059669; color: #fff; border: none; border-radius: 4px;">AI로 수정 적용</button>
+    <!-- 내용 미리보기 / 프롬프트 본문 -->
+    <div class="form-group">
+      <label for="modifyPreview">현재 내용 / 컨텍스트</label>
+      <textarea id="modifyPreview" rows="8"></textarea>
     </div>
+
+    <!-- 실행 버튼 -->
+    <div class="btn-row">
+      <button id="loadContentBtn">현재 내용 불러오기</button>
+      <button id="applyModifyBtn" class="primary-btn">AI 실행 / 수정 적용</button>
+    </div>
+
+    <div id="logOutput"></div>
   </div>
 
   <script>
-    // 1. API 키 관리 로직
+    // Codespaces 포트 3000번 백엔드 주소 계산
+    const API_BASE = window.location.port === '3000' 
+      ? '' 
+      : window.location.origin.replace(window.location.port, '3000');
+
     const apiKeyInput = document.getElementById('apiKeyInput');
     const saveKeyBtn = document.getElementById('saveKeyBtn');
     const keyStatus = document.getElementById('keyStatus');
 
-    fetch('/api/key/status').then(r => r.json()).then(d => {
-      keyStatus.innerText = d.hasKey ? '🟢 서버 연결됨' : '🔴 API 키 미등록';
-    }).catch(() => { keyStatus.innerText = '🔴 서버 오프라인'; });
-
-    saveKeyBtn.onclick = async () => {
-      const key = apiKeyInput.value.trim();
-      if (!key) return alert('API 키를 입력하세요');
-      const res = await fetch('/api/key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: key })
-      });
-      const d = await res.json();
-      if (d.hasKey) {
-        keyStatus.innerText = '🟢 서버 연결됨';
-        apiKeyInput.value = '';
-        alert('서버 메모리에 안전하게 등록되었습니다.');
-      }
-    };
-
-    // 2. 채팅 로직
-    const chatInput = document.getElementById('chatInput');
-    const chatSend = document.getElementById('chatSend');
-    const chatMessages = document.getElementById('chatMessages');
-    const promptContext = document.getElementById('promptContext');
     const modelSelect = document.getElementById('modelSelect');
-
-    promptContext.value = document.body.innerText.slice(0, 500);
-
-    function appendMsg(role, text) {
-      const div = document.createElement('div');
-      div.className = `msg ${role}`;
-      div.innerText = `${role === 'user' ? '나' : 'AI'}: ${text}`;
-      chatMessages.appendChild(div);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    async function handleSend() {
-      const text = chatInput.value.trim();
-      if (!text) return;
-      appendMsg('user', text);
-      chatInput.value = '';
-
-      try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: text,
-            pageContext: promptContext.value,
-            model: modelSelect.value
-          })
-        });
-        const d = await res.json();
-        appendMsg('ai', d.reply || d.text || '응답을 받지 못했습니다.');
-      } catch (e) {
-        appendMsg('ai', '오류 발생: ' + e.message);
-      }
-    }
-
-    chatSend.onclick = handleSend;
-    chatInput.onkeydown = (e) => { if (e.key === 'Enter') handleSend(); };
-
-    // 3. 페이지 직접 수정 연동
     const modifyTarget = document.getElementById('modifyTarget');
     const modifyInstruction = document.getElementById('modifyInstruction');
     const modifyPreview = document.getElementById('modifyPreview');
     const loadContentBtn = document.getElementById('loadContentBtn');
     const applyModifyBtn = document.getElementById('applyModifyBtn');
+    const logOutput = document.getElementById('logOutput');
 
-    loadContentBtn.onclick = async () => {
-      if (modifyTarget.value === 'index') {
-        const r = await fetch('/api/page/index');
-        const d = await r.json();
-        modifyPreview.value = d.content || '';
-      } else {
-        modifyPreview.value = promptContext.value;
+    function showLog(text, isError = false) {
+      logOutput.style.display = 'block';
+      logOutput.style.color = isError ? '#dc2626' : '#1e293b';
+      logOutput.innerText = text;
+    }
+
+    // 초기 상태 확인
+    fetch(`${API_BASE}/api/key/status`)
+      .then(r => r.json())
+      .then(d => {
+        keyStatus.innerText = d.hasKey ? '🟢 서버 연결됨' : '🔴 API 키 미등록';
+      })
+      .catch(() => {
+        keyStatus.innerText = '🔴 서버 오프라인 (3000번 포트 확인 필요)';
+      });
+
+    // 기본 본문 컨텍스트 채우기
+    modifyPreview.value = document.body.innerText.slice(0, 500);
+
+    // API 키 등록
+    saveKeyBtn.onclick = async () => {
+      const key = apiKeyInput.value.trim();
+      if (!key) return alert('API 키를 입력하세요');
+      try {
+        const res = await fetch(`${API_BASE}/api/key`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: key })
+        });
+        const d = await res.json();
+        if (d.hasKey) {
+          keyStatus.innerText = '🟢 서버 연결됨';
+          apiKeyInput.value = '';
+          alert('서버 메모리에 안전하게 등록되었습니다.');
+        }
+      } catch (e) {
+        alert('서버 등록 실패: ' + e.message);
       }
     };
 
+    // 내용 불러오기
+    loadContentBtn.onclick = async () => {
+      if (modifyTarget.value === 'index') {
+        try {
+          const r = await fetch(`${API_BASE}/api/page/index`);
+          const d = await r.json();
+          modifyPreview.value = d.content || '';
+          showLog('index.html 내용을 불러왔습니다.');
+        } catch (e) {
+          showLog('내용 불러오기 실패: ' + e.message, true);
+        }
+      } else {
+        modifyPreview.value = document.body.innerText.slice(0, 600);
+        showLog('현재 페이지 컨텍스트를 불러왔습니다.');
+      }
+    };
+
+    // AI 수정 및 실행
     applyModifyBtn.onclick = async () => {
       const instruction = modifyInstruction.value.trim();
-      if (!instruction) return alert('수정 지시를 입력하세요');
-      applyModifyBtn.innerText = '수정 처리 중...';
+      if (!instruction) return alert('지시 또는 메시지를 입력하세요');
+
+      applyModifyBtn.disabled = true;
+      applyModifyBtn.innerText = 'AI 처리 중...';
+      showLog('AI 모델 요청 중...');
+
       try {
-        const res = await fetch('/api/ai-modify', {
+        const res = await fetch(`${API_BASE}/api/ai-modify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             target: modifyTarget.value,
             instruction: instruction,
-            currentContent: modifyPreview.value
+            currentContent: modifyPreview.value,
+            model: modelSelect.value
           })
         });
+
         const d = await res.json();
         if (d.ok) {
-          alert('수정이 적용되었습니다!');
-          if (modifyTarget.value === 'prompt') promptContext.value = d.content;
           modifyPreview.value = d.content || '';
+          modifyInstruction.value = '';
+          showLog(`성공: [${modelSelect.value}] 모델을 통해 반영되었습니다.`);
         } else {
-          alert('수정 실패: ' + (d.error || '알 수 없는 오류'));
+          showLog('실패: ' + (d.error || '알 수 없는 오류'), true);
         }
       } catch (e) {
-        alert('요청 중 오류: ' + e.message);
+        showLog('요청 오류: ' + e.message, true);
       } finally {
-        applyModifyBtn.innerText = 'AI로 수정 적용';
+        applyModifyBtn.disabled = false;
+        applyModifyBtn.innerText = 'AI 실행 / 수정 적용';
       }
+    };
+
+    modifyInstruction.onkeydown = (e) => {
+      if (e.key === 'Enter') applyModifyBtn.click();
     };
   </script>
 </body>
