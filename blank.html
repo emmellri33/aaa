@@ -901,6 +901,36 @@
       return { whatLine, whyLine };
     }
 
+    function normalizePatchEdits(patch) {
+      if (patch && Array.isArray(patch.edits) && patch.edits.length > 0) {
+        return patch.edits;
+      }
+      if (patch && typeof patch.search === "string" && typeof patch.replace === "string") {
+        return [{ search: patch.search, replace: patch.replace }];
+      }
+      return [];
+    }
+
+    function verifyClientEditIntegrity(searchStr, replaceStr) {
+      const sLines = String(searchStr || "").split("\n");
+      const rLines = String(replaceStr || "").split("\n");
+      if (sLines.length > 1 && rLines.length === 1) {
+        return { ok: false, reason: "줄바꿈 증발 감지" };
+      }
+      const cssPropRegex = /([a-zA-Z-]+)\s*:/g;
+      let m;
+      while ((m = cssPropRegex.exec(searchStr)) !== null) {
+        const prop = m[1].toLowerCase();
+        if (!["http", "https", "javascript"].includes(prop)) {
+          const keepRe = new RegExp(prop + "\\s*:", "i");
+          if (!keepRe.test(replaceStr)) {
+            return { ok: false, reason: "기존 속성(" + prop + ") 증발 감지" };
+          }
+        }
+      }
+      return { ok: true };
+    }
+
     function appendPatchCard(patch, saveToRoom = true, originalInstruction = "", healAttempt = 0) {
       const msgDiv = document.createElement("div");
       msgDiv.className = "msg ai";
@@ -912,21 +942,35 @@
       const bubble = document.createElement("div");
       bubble.className = "bubble";
 
-      const existsNow = contextText.value.includes(patch.search);
+      const edits = normalizePatchEdits(patch);
       const { whatLine, whyLine } = formatTwoLineExplanation(patch.explanation);
 
+      const piecesHtml = edits.map((ed, idx) => {
+        const existsNow = contextText.value.includes(ed.search);
+        const wsCheck = verifyClientEditIntegrity(ed.search, ed.replace);
+        const badge = !existsNow
+          ? "⚠️ 원본 불일치"
+          : (!wsCheck.ok ? ("⚠️ " + wsCheck.reason) : "✅ 매치 및 공백 검증 통과");
+        return `
+          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:8px; margin-bottom:8px; background:#ffffff;">
+            <div style="font-size:11.5px; font-weight:700; color:#334155; margin-bottom:4px;">🧩 조각 ${idx + 1} / ${edits.length} — <span>${badge}</span></div>
+            <div style="font-size:11px; color:#dc2626; font-weight:600; margin-bottom:2px;">- 찾을 조각 (search)</div>
+            <pre style="background:#fee2e2; color:#991b1b; padding:8px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; margin-bottom:6px;">${escapeHtml(ed.search)}</pre>
+            <div style="font-size:11px; color:#059669; font-weight:600; margin-bottom:2px;">+ 바꿀 조각 (replace)</div>
+            <pre style="background:#dcfce7; color:#166534; padding:8px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; margin-bottom:0;">${escapeHtml(ed.replace)}</pre>
+          </div>
+        `;
+      }).join("");
+
       bubble.innerHTML = `
-        <div style="font-weight:700; margin-bottom:6px;">🛠️ 패치 제안 (${escapeHtml(patch.target || "index.html")})</div>
+        <div style="font-weight:700; margin-bottom:6px;">🛠️ 패치 제안 (${escapeHtml(patch.target || "index.html")} · 총 ${edits.length}조각)</div>
         <div style="background:#f8fafc; border-left:3px solid #2563eb; padding:6px 10px; margin-bottom:8px; font-size:13px;">
           <div style="font-weight:700; color:#1e293b;">${escapeHtml(whatLine)}</div>
           <div style="color:#475569;">${escapeHtml(whyLine)}</div>
         </div>
-        <div style="font-size:11px; color:#dc2626; font-weight:600; margin-bottom:2px;">- 찾을 조각 (search) ${existsNow ? "✅ 매치됨" : "⚠️ 원본 불일치"}</div>
-        <pre style="background:#fee2e2; color:#991b1b; padding:8px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; margin-bottom:8px;">${escapeHtml(patch.search)}</pre>
-        <div style="font-size:11px; color:#059669; font-weight:600; margin-bottom:2px;">+ 바꿀 조각 (replace)</div>
-        <pre style="background:#dcfce7; color:#166534; padding:8px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; margin-bottom:10px;">${escapeHtml(patch.replace)}</pre>
+        ${piecesHtml}
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <button class="apply-patch-btn" style="background:#2563eb; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600;">✅ 적용</button>
+          <button class="apply-patch-btn" style="background:#2563eb; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600;">✅ 전 조각 일괄 적용</button>
           <button class="undo-patch-btn" disabled style="background:#64748b; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:not-allowed; font-size:12px; font-weight:600; opacity:0.5;">↩️ 되돌리기</button>
           <span class="patch-status" style="font-size:12px; color:#475569;">승인 대기 중 (자동 적용 금지)</span>
         </div>
@@ -940,21 +984,36 @@
       applyBtn.onclick = async () => {
         await loadIndexCode();
         const current = contextText.value;
-        if (!current.includes(patch.search)) {
-          const errMsg = "원본 index.html에서 search 조각을 찾을 수 없습니다.";
-          statusSpan.style.color = "#dc2626";
-          statusSpan.innerText = "❌ " + errMsg + " (자가수복 시작)";
-          await logFailureToServer("패치 search 불일치", errMsg, "원본 코드 재확인 후 자가수복 재요청");
-          await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1);
-          return;
+
+        // 1. 원자적(Atomic) 사전 검증: 하나라도 매치 실패하거나 공백/속성 증발 시 전체 미적용
+        let working = current;
+        for (let i = 0; i < edits.length; i++) {
+          const ed = edits[i];
+          if (!working.includes(ed.search)) {
+            const errMsg = `조각 #${i + 1}(${ed.search.slice(0, 30).replace(/\n/g, " ")}...)이 원본에 없어 전체 미적용 처리됨`;
+            statusSpan.style.color = "#dc2626";
+            statusSpan.innerText = "❌ " + errMsg;
+            await logFailureToServer("다조각 원자적 매치 실패", errMsg, "전 조각 원본 재확인 후 자가수복 재요청");
+            await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1);
+            return;
+          }
+          const wsCheck = verifyClientEditIntegrity(ed.search, ed.replace);
+          if (!wsCheck.ok) {
+            const errMsg = `조각 #${i + 1} 공백/속성 검증 실패(${wsCheck.reason})로 전체 미적용 처리됨`;
+            statusSpan.style.color = "#dc2626";
+            statusSpan.innerText = "❌ " + errMsg;
+            await logFailureToServer("다조각 공백 검증 실패", errMsg, "공백 및 기존 속성 유지하여 재요청");
+            await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1);
+            return;
+          }
+          working = working.replace(ed.search, () => ed.replace);
         }
 
-        const updated = current.replace(patch.search, () => patch.replace);
-        const check = validatePatchedHtml(updated);
+        const check = validatePatchedHtml(working);
         if (!check.ok) {
           statusSpan.style.color = "#dc2626";
-          statusSpan.innerText = "❌ 검증 실패: " + check.reason + " (자가수복 시작)";
-          await logFailureToServer("패치 후 검증 실패", check.reason, "문법/구조 오류 수정 자가수복 재요청");
+          statusSpan.innerText = "❌ 검증 실패: " + check.reason + " (전체 미적용)";
+          await logFailureToServer("패치 후 HTML/JS 검증 실패", check.reason, "문법 오류 수정 자가수복 재요청");
           await requestSelfHealRetry(originalInstruction || whatLine, check.reason, healAttempt + 1);
           return;
         }
@@ -963,7 +1022,7 @@
         const r = await fetch("/api/page/index", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: updated })
+          body: JSON.stringify({ content: working })
         });
         const resData = await r.json();
         if (resData.ok) {
@@ -976,7 +1035,7 @@
           undoBtn.style.cursor = "pointer";
           undoBtn.style.background = "#ea580c";
           statusSpan.style.color = "#059669";
-          statusSpan.innerText = "✅ 적용 및 검증 완료";
+          statusSpan.innerText = `✅ 전 조각(${edits.length}개) 원자적 반영됨 (1차 글자·공백 통과)`;
         } else {
           const saveErr = resData.error || "저장 오류";
           statusSpan.style.color = "#dc2626";
@@ -1004,7 +1063,7 @@
           applyBtn.style.opacity = "1";
           applyBtn.style.cursor = "pointer";
           statusSpan.style.color = "#ea580c";
-          statusSpan.innerText = "↩️ 되돌리기 완료";
+          statusSpan.innerText = "↩️ 전 조각 되돌리기 완료";
         }
       };
 

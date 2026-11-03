@@ -169,19 +169,21 @@ const PATCH_SYSTEM_PROMPT = [
   USER_PROFILE_HEADER,
   "",
   "당신은 index.html 패치 생성 전용 AI입니다.",
-  "[절대 규칙 — 보기 → 고치기 → 눈]",
-  "1. 마크다운 코드블록, 인사말, 잡담을 절대 출력하지 마세요. 오직 유효한 JSON 객체 1개만 출력하세요.",
-  "2. [의도 추론 & 추측 표시] 패치 전에 사용자 의도를 먼저 파악하세요. 지시가 다소 막연하더라도 파일 맥락상 합리적으로 추측 가능하면 질문하지 말고 먼저 패치를 제안하되, 추측한 부분에는 반드시 [추측] 표시를 넣으세요. 전혀 알 수 없을 때만 question 타입으로 질문하세요.",
-  "3. [전수 탐색] 패치 작성 전 index.html 전체를 읽고, 대상 선택자·속성·값의 변형(다크모드 body.dark, 미디어쿼리 @media, hover 등)을 전수 탐색하세요. 다크모드나 변형 규칙에 같은 속성이 걸려 있다면 함께 수정하여 누락을 막으세요.",
-  "4. [증거 인용 & 완료 금지] search 필드에는 현재 index.html에 글자·공백·줄바꿈까지 100% 정확히 존재하는 원본 조각만 넣으세요. 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
-  "5. [설명 2줄 규격] explanation 필드는 결론 먼저 짧게 반드시 아래 두 줄 형식으로만 작성하세요:",
-  "   [뭘] (의도: 사용자 의도 요약) 무엇을 어떻게 바꾸는지 결론 한 줄",
+  "[절대 규칙 — 보기 → 고치기 → 눈 (다조각 & 공백 엄수)]",
+  "1. 마크다운 코드블록(```), 인사말, 잡담을 절대 출력하지 마세요. 오직 유효한 JSON 객체 1개만 출력하세요.",
+  "2. [의도 추론 & 추측 표시] 지시가 다소 막연하더라도 파일 맥락상 합리적으로 추측 가능하면 질문하지 말고 먼저 패치를 제안하되, 추측한 부분에는 반드시 [추측] 표시를 넣으세요. 전혀 알 수 없을 때만 question 타입으로 질문하세요.",
+  "3. [전수 탐색 & 다조각 edits 필수] 패치 전 index.html 전체를 읽고, 대상 선택자·속성·값의 모든 변형(예: 기본 #hello 와 다크모드 body.dark #hello, 미디어쿼리 등)을 전수 탐색하세요. 변형이 여러 곳에 존재하면 절대 1곳만 고치지 말고, 반드시 edits 배열에 모든 조각을 빠짐없이 담아 한 번에 반환하세요.",
+  "4. [공백·줄바꿈·기존 속성 100% 보존] search에는 원본 index.html에 존재하는 글자·들여쓰기 공백·줄바꿈(\n)을 토씨 하나 틀리지 않고 그대로 넣으세요. replace 작성 시에도 수정 대상 값만 바꾸고, 같은 블록 내 다른 속성(예: font-size: 64px;, font-weight: bold; 등)과 줄바꿈·들여쓰기·콜론 뒤 공백을 원본과 100% 똑같이 유지하세요. 속성이나 공백이 증발하면 즉시 거부됩니다.",
+  "5. [증거 인용 & 완료 문구 금지] 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
+  "6. [설명 2줄 규격] explanation 필드는 결론 먼저 짧게 반드시 아래 두 줄 형식으로만 작성하세요:",
+  "   [뭘] (의도: 사용자 의도 요약) 무엇을 어떻게 바꾸는지 결론 한 줄 (다조각이면 총 몇 곳인지 명시)",
   "   [왜] (근거: 매치된 기존 선택자/코드 인용, 추측 시 [추측] 명시) 바꾸는 이유 한 줄",
-  "6. 지시를 합리적으로 수행할 수 있으면 아래 JSON 규격만 반환하세요:",
-  "{\"type\":\"patch\",\"explanation\":\"[뭘] (의도: ...) ...\\n[왜] (근거: ...) ...\",\"target\":\"index.html\",\"search\":\"파일에 정확히 존재하는 원본 조각\",\"replace\":\"대체할 새 조각\"}",
-  "7. 대상이 아예 없거나 전혀 알 수 없을 때만 아래 JSON 규격만 반환하세요:",
-  "{\"type\":\"question\",\"question\":\"[의도 확인] 사용자에게 물어볼 구체적인 질문\"}",
+  "7. 지시를 수행할 수 있으면 아래 다조각 JSON 규격만 반환하세요:",
+  "{\"type\":\"patch\",\"explanation\":\"[뭘] (의도: ...) ...\\n[왜] (근거: ...) ...\",\"target\":\"index.html\",\"edits\":[{\"search\":\"원본 조각 1\",\"replace\":\"새 조각 1\"},{\"search\":\"원본 조각 2\",\"replace\":\"새 조각 2\"}]}",
+  "8. 대상이 아예 없거나 전혀 알 수 없을 때만 아래 JSON 규격만 반환하세요:",
+  "{\"type\":\"question\",\"question\":\"[의도 확인] 사용자에게 물어볼 구체적인 질문\"}"
 ].join("\n");
+
 function extractJsonString(raw) {
   const txt = String(raw || "").trim();
   const first = txt.indexOf("{");
@@ -190,6 +192,28 @@ function extractJsonString(raw) {
     return txt.slice(first, last + 1);
   }
   return txt;
+}
+
+function checkWhitespaceAndProps(searchStr, replaceStr) {
+  const sLines = String(searchStr).split("\n");
+  const rLines = String(replaceStr).split("\n");
+  if (sLines.length > 1 && rLines.length === 1) {
+    return { ok: false, reason: "다중 줄(multi-line) 블록의 줄바꿈이 증발했습니다." };
+  }
+  const cssPropRegex = /([a-zA-Z-]+)\s*:/g;
+  const sProps = [];
+  let m;
+  while ((m = cssPropRegex.exec(searchStr)) !== null) {
+    const p = m[1].toLowerCase();
+    if (!["http", "https", "javascript"].includes(p)) sProps.push(p);
+  }
+  for (const prop of sProps) {
+    const propKeepRegex = new RegExp(prop + "\\s*:", "i");
+    if (!propKeepRegex.test(replaceStr)) {
+      return { ok: false, reason: "원본에 있던 속성(" + prop + ")이 replace에서 증발했습니다." };
+    }
+  }
+  return { ok: true };
 }
 
 app.post('/api/ai-modify', async (req, res) => {
@@ -232,9 +256,31 @@ app.post('/api/ai-modify', async (req, res) => {
 
     if (parsed.type === "patch") {
       parsed.target = "index.html";
-      if (typeof parsed.search !== "string" || typeof parsed.replace !== "string") {
-        return res.status(422).json({ ok: false, error: "patch JSON에 search/replace 필드가 누락되었습니다.", patch: parsed });
+      // 다조각(edits) 및 단일(search/replace) 양방향 하위호환 정규화
+      let rawEdits = [];
+      if (Array.isArray(parsed.edits) && parsed.edits.length > 0) {
+        rawEdits = parsed.edits;
+      } else if (typeof parsed.search === "string" && typeof parsed.replace === "string") {
+        rawEdits = [{ search: parsed.search, replace: parsed.replace }];
+      } else {
+        return res.status(422).json({ ok: false, error: "patch JSON에 edits 배열 또는 search/replace 필드가 누락되었습니다.", patch: parsed });
       }
+
+      for (let i = 0; i < rawEdits.length; i++) {
+        const ed = rawEdits[i];
+        if (!ed || typeof ed.search !== "string" || !ed.search || typeof ed.replace !== "string") {
+          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + "의 search/replace 형식이 올바르지 않습니다.", patch: parsed });
+        }
+        const wsCheck = checkWhitespaceAndProps(ed.search, ed.replace);
+        if (!wsCheck.ok) {
+          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + " 공백/속성 검증 실패: " + wsCheck.reason, patch: parsed });
+        }
+      }
+
+      parsed.edits = rawEdits;
+      parsed.search = rawEdits[0].search;
+      parsed.replace = rawEdits[0].replace;
+
       const exp = String(parsed.explanation || "").trim();
       if (!exp.includes("[뭘]") || !exp.includes("[왜]")) {
         const lines = exp.split("\n").filter(Boolean);
