@@ -43,7 +43,7 @@ app.post('/api/chat', async (req, res) => {
       (context ? '[현재 페이지 내용]\n' + context + '\n\n' : '') +
       '사용자 메시지: ' + msg;
 
-    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(GEMINI_API_KEY).length, "model=" + GEMINI_MODEL);
+    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(GEMINI_API_KEY).length, "model=" + (typeof useModel !== "undefined" ? useModel : GEMINI_MODEL));
     const response = await ai.models.generateContent({
       model: useModel,
       contents: prompt,
