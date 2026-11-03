@@ -1,0 +1,18 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "서버 켜기",
+      "type": "shell",
+      "command": "pkill -f 'node server.js' 2>/dev/null; sleep 1; cd /workspaces/aaa && nohup node server.js > /tmp/server.log 2>&1 & sleep 1; curl -s -m 5 http://localhost:3000/health",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    }
+  ]
+}
