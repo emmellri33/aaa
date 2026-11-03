@@ -27,6 +27,8 @@ app.use((req, res, next) => {
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, pageContext } = req.body || {};
+    const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
+    const useModel = ALLOWED_MODELS.includes(req.body && req.body.model) ? req.body.model : GEMINI_MODEL;
     const msg = (message || '').toString().trim();
     if (!msg) return res.status(400).json({ error: 'message required' });
 
@@ -41,8 +43,9 @@ app.post('/api/chat', async (req, res) => {
       (context ? '[현재 페이지 내용]\n' + context + '\n\n' : '') +
       '사용자 메시지: ' + msg;
 
+    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(GEMINI_API_KEY).length, "model=" + GEMINI_MODEL);
     const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
+      model: useModel,
       contents: prompt,
     });
     const reply = (response && response.text) ? response.text : '(응답 없음)';
