@@ -334,7 +334,7 @@
           const d = await res.json();
           loadingMsg.remove();
           
-          const reply = d.reply || d.text || '응답이 없습니다.';
+          const reply = d.reply || d.text || (d.error ? ('❌ ' + d.error) : '응답이 없습니다.');
           
           // 응답 안에 코드블록이 있으면 파일 다운로드 생성
           const codeMatch = reply.match(/```([a-zA-Z0-9]+)?\n([\s\S]*?)```/);
