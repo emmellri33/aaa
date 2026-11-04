@@ -1,4 +1,3 @@
-const cors = require("cors");
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -187,7 +186,8 @@ const PATCH_SYSTEM_PROMPT = [
   "8. 지시를 패치로 수행할 수 있으면 아래 다조각 JSON 규격만 반환하세요:",
   "{\"type\":\"patch\",\"explanation\":\"[뭘] (의도: ...) ...\\n[왜] (근거: ...) ...\",\"target\":\"index.html\",\"edits\":[{\"search\":\"원본 조각 1\",\"replace\":\"새 조각 1\"},{\"search\":\"원본 조각 2\",\"replace\":\"새 조각 2\"}]}",
   "9. 단순 질문에 대한 코드 인용 답변이거나, 대상이 아예 없어 확인이 필요할 때는 아래 JSON 규격만 반환하세요:",
-  "{\"type\":\"question\",\"question\":\"[의도/근거 인용 또는 확인 질문] 구체적인 답변 또는 질문\"}"
+  "{\"type\":\"question\",\"question\":\"[의도/근거 인용 또는 확인 질문] 구체적인 답변 또는 질문\"}",
+  "10. [위험 자가검토] 원본 30줄 이상 삭제·파일 전체 교체·핵심 기능 제거로 판단되면 patch 전에 explanation [왜] 끝에 [위험] 한 줄(되돌릴 수 없는 범위와 이유)을 의무로 적으세요. 복구 비용이 크면 patch 대신 question으로 전환하고, 거절 이유＋안전한 대안(조각 분할·주석처리)을 함께 제시하세요. '하라면 한다'는 금지입니다."
 ].join("\n");
 
 function extractJsonString(raw) {
@@ -621,7 +621,7 @@ app.post('/api/ai-modify', async (req, res) => {
       const exp = String(finalParsed.explanation || "").trim();
       if (!exp.includes("[뭘]") || !exp.includes("[왜]")) {
         const lines = exp.split("\n").filter(Boolean);
-        finalParsed.explanation = "[뭘] " + (lines[0] || "요청하신 코드 조각 수정") + "\n[왜] " + (lines[1] || "사용자 지시 반영을 위해 수정");
+      finalParsed.explanation = "[뭘] [추측] " + (lines[0] || "요청하신 코드 조각 수정") + "\n[왜] [추측] 근거 없음 — 원본 대조 없이 생성됨";
       }
     } else if (finalParsed.type === "question") {
       if (typeof finalParsed.question !== "string") {
