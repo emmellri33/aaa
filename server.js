@@ -1087,6 +1087,82 @@ app.get('/api/files', (req, res) => {
   }
 });
 
+app.post('/api/files/write', (req, res) => {
+  try {
+    const { name, content } = req.body || {};
+    const filename = String(name || "").trim();
+    if (!filename || isForbiddenFileName(filename)) {
+      return res.status(403).json({ ok: false, error: "거부됨: 쓰기 금지된 파일명입니다." });
+    }
+    const p = path.join(__dirname, filename);
+
+    if (fs.existsSync(p)) {
+      saveSnapshotToDisk(fs.readFileSync(p, "utf8"));
+    } else if (filename.endsWith('.html')) {
+      setCreator(filename, "gemgem");
+    }
+
+    fs.writeFileSync(p, content || "", "utf8");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/git/status', (req, res) => {
+  execFile("git", ["status", "--short"], { cwd: __dirname }, (err1, stdout1) => {
+    execFile("git", ["log", "--oneline", "-5"], { cwd: __dirname }, (err2, stdout2) => {
+      const statusText = String(stdout1 || "").trim() || "No changes";
+      const logText = String(stdout2 || "").trim() || "No commits";
+      res.json({ ok: true, status: statusText, log: logText });
+    });
+  });
+});
+
+app.post('/api/git/commit', (req, res) => {
+  const { message } = req.body || {};
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({ ok: false, error: "커밋 메시지가 필요합니다." });
+  }
+
+  execFile("git", ["add", "-A"], { cwd: __dirname }, (err) => {
+    if (err) return res.status(500).json({ ok: false, error: "git add 실패: " + err.message });
+
+    const commitArgs = [
+      "-c", "user.name=gemgem",
+      "-c", "user.email=gemgem@example.com",
+      "commit", "-m", message.trim()
+    ];
+
+    execFile("git", commitArgs, { cwd: __dirname }, (err2, stdout2) => {
+      if (err2) {
+        if (err2.stdout && err2.stdout.includes("nothing to commit")) {
+          return res.json({ ok: true, message: "변경사항이 없어 커밋할 내용이 없습니다." });
+        }
+        return res.status(500).json({ ok: false, error: "git commit 실패: " + err2.message });
+      }
+      res.json({ ok: true, message: "커밋 성공", output: String(stdout2).trim() });
+    });
+  });
+});
+
+// --- 격리 편집 라우트 (/api/cockpit/target) ---
+app.post('/api/cockpit/target', (req, res) => {
+  try {
+    const { file, content } = req.body || {};
+    if (file !== "blank.html" && file !== "cockpit.html") {
+      return res.status(403).json({ ok: false, error: "격리 라우트에서는 blank.html과 cockpit.html만 수정 가능합니다." });
+    }
+    const p = path.join(__dirname, file);
+    if (fs.existsSync(p)) {
+      saveSnapshotToDisk(fs.readFileSync(p, "utf8"));
+    }
+    fs.writeFileSync(p, content || "", "utf8");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 app.get('/api/files/read', (req, res) => {
   try {
     const name = String((req.query && req.query.name) || "").trim();
