@@ -661,11 +661,12 @@ app.post('/api/ai-modify', async (req, res) => {
     let targetFile = target;
     if (targetFile === "index") targetFile = "index.html";
 
-    if (targetFile !== "index.html" && getCreator(targetFile) === "user") {
+    const creator = getCreator(targetFile);
+    if (targetFile !== "index.html" && creator === "user") {
       recordSecurityOrToolFailure("user 소유 파일 AI 패치 시도", targetFile, "403 거부");
       return res.status(403).json({ error: "거부됨(403): 사용자 소유 파일은 AI 패치가 허용되지 않습니다." });
     }
-    if (targetFile === "blank.html" || targetFile === "cockpit.html" || targetFile === "server.js") {
+    if (targetFile === "blank.html" || targetFile === "server.js" || (targetFile === "cockpit.html" && creator !== "gemgem")) {
       return res.status(403).json({ error: "거부됨(403): 시스템 핵심 파일은 패치 대상이 아닙니다." });
     }
 
