@@ -112,7 +112,7 @@
   </style>
 </head>
 <body>
-  <button id="theme-toggle">🌙 다크 모드</button>
+  <button id="theme-toggle">🌙 Dark Mode</button>
   <button id="blank-btn">edit</button>
   <h1 id="hello"><span style="color: #ff4d4f;">h</span><span style="color: #ffa940;">e</span><span style="color: #ffec3d;">l</span><span style="color: #73d13d;">l</span><span style="color: #40a9ff;">o</span></h1>
   <div id="counter">0</div>
@@ -221,10 +221,10 @@
     function applyTheme(theme) {
       if (theme === 'dark') {
         document.body.classList.add('dark');
-        toggleBtn.textContent = '☀️ 라이트 모드';
+        toggleBtn.textContent = '☀️ Light Mode';
       } else {
         document.body.classList.remove('dark');
-        toggleBtn.textContent = '🌙 다크 모드';
+        toggleBtn.textContent = '🌙 Dark Mode';
       }
     }
     applyTheme(localStorage.getItem(themeKey) || 'light');
