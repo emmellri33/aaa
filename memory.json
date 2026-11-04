@@ -1,5 +1,5 @@
 {
-  "facts": [
+  "global": [
     "작업 디렉토리는 /workspaces/aaa 이며 편집 대상은 index.html 이다.",
     "기본 모델은 gemini-3.5-flash-lite 이다.",
     "[뭘] (의도: H1 색상 변경) index.html의 #hello 선택자와 body.dark #hello 선택자의 color 값을 blue에서 orange로 총 2곳 변경합니다 / [왜] (근거: 7행 `#hello { /       color: blue;` 및 53행 `body.dark #hello { color: blue; }` 코드 인용) / [추측] 다크모드와 라이트모드 모두 주황색으로 통일하기 위해 두 곳 모두 변경합니다",
@@ -10,5 +10,10 @@
     "최근 요청 점검: 출력 없음, 다음 단계 / git status --short 출력 없음은 이미 확인済. git status 재실행과 커밋안은 취소한다(커밋할 변경이 없음). “제공해주신  / cat 지시 취소. 앵커 재확인은 네 grep 도구로 네가 직접 수행하라. B 산출물의 앵커 2개만 확인하면 된다. index.html 전체 덤",
     ".env 및 API 키/포트 설정은 절대 수정하지 말 것",
     "search 조각은 현재 index.html에 100% 존재하는 문자열만 사용할 것"
-  ]
+  ],
+  "rooms": {
+    "room_1793781603173": [
+      "너는 '젬젬'이야"
+    ]
+  }
 }

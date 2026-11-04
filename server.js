@@ -31,14 +31,33 @@ function getActiveKey() {
   return memoryApiKey || process.env.GEMINI_API_KEY || "";
 }
 
-function readMemoryFacts() {
+function readMemoryData() {
   try {
-    if (!fs.existsSync(MEMORY_PATH)) return [];
-    const data = JSON.parse(fs.readFileSync(MEMORY_PATH, "utf8"));
-    return Array.isArray(data.facts) ? data.facts : [];
+    if (!fs.existsSync(MEMORY_PATH)) return { global: [], rooms: {} };
+    const raw = fs.readFileSync(MEMORY_PATH, "utf8");
+    const data = JSON.parse(raw);
+    
+    // 마이그레이션: 기존 { facts: [...] } 구조인 경우
+    if (Array.isArray(data.facts) && !data.global && !data.rooms) {
+      return { global: data.facts, rooms: {} };
+    }
+    
+    return {
+      global: Array.isArray(data.global) ? data.global : [],
+      rooms: (data.rooms && typeof data.rooms === "object") ? data.rooms : {}
+    };
   } catch (e) {
-    return [];
+    return { global: [], rooms: {} };
   }
+}
+
+function readMemoryFacts(roomId) {
+  const data = readMemoryData();
+  let facts = [...data.global];
+  if (roomId && data.rooms[roomId] && Array.isArray(data.rooms[roomId])) {
+    facts = facts.concat(data.rooms[roomId]);
+  }
+  return facts;
 }
 
 function searchRelevantFailures(queryText) {
@@ -122,7 +141,7 @@ app.post('/api/chat', async (req, res) => {
     const ai = new GoogleGenAI({ apiKey: activeKey });
     const htmlRaw = pageContext || (fs.existsSync(INDEX_PATH) ? fs.readFileSync(INDEX_PATH, "utf8") : "");
     const snippet = extractRelevantHtmlSnippet(htmlRaw, msg);
-    const facts = readMemoryFacts();
+    const facts = readMemoryFacts(req.body ? req.body.roomId : null);
     const memoryBlock = facts.length > 0 ? "[공유 기억 (memory.json)]\n- " + facts.join("\n- ") + "\n\n" : "";
 
     const prompt = [
@@ -561,7 +580,7 @@ app.post('/api/ai-modify', async (req, res) => {
       return res.json({ ok: true, result: JSON.stringify(demo), patch: demo });
     }
 
-    const facts = readMemoryFacts();
+    const facts = readMemoryFacts(req.body ? req.body.roomId : null);
     const memoryBlock = facts.length > 0 ? "\n\n[공유 기억 (memory.json)]\n- " + facts.join("\n- ") : "";
     const failBlock = searchRelevantFailures(instruction + " " + (retryError || ""));
     const failureNote = failBlock ? "\n\n[과거 실패 일지 (failures.md) — 동일 실수 반복 금지]\n" + failBlock : "";
@@ -774,11 +793,13 @@ app.delete("/api/key", (req, res) => {
   res.json({ ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY) });
 });
 
-// --- 기억 파일 (memory.json) GET / POST ---
+// --- 기억 파일 (memory.json) GET / POST / DELETE ---
 app.get('/api/memory', (req, res) => {
   try {
-    const facts = readMemoryFacts();
-    res.json({ ok: true, facts, content: JSON.stringify({ facts }, null, 2) });
+    const roomId = req.query.roomId;
+    const data = readMemoryData();
+    const facts = readMemoryFacts(roomId);
+    res.json({ ok: true, data, facts, content: JSON.stringify(data, null, 2) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -786,26 +807,64 @@ app.get('/api/memory', (req, res) => {
 
 app.post('/api/memory', (req, res) => {
   try {
-    const { facts, addFacts, rawJson } = req.body || {};
-    let nextFacts = readMemoryFacts();
+    const { facts, addFacts, rawJson, roomId } = req.body || {};
+    let data = readMemoryData();
+    let currentFacts = roomId && roomId !== "global" ? (data.rooms[roomId] || []) : data.global;
+
     if (typeof rawJson === "string") {
       const parsed = JSON.parse(rawJson);
-      if (!Array.isArray(parsed.facts)) {
-        return res.status(400).json({ ok: false, error: "memory.json은 { \"facts\": [...] } 형식이어야 합니다." });
+      if (parsed.global || parsed.rooms || Array.isArray(parsed.facts)) {
+        if (Array.isArray(parsed.facts)) {
+          data.global = parsed.facts.map(x => String(x).trim()).filter(Boolean);
+          data.rooms = {};
+        } else {
+          data.global = Array.isArray(parsed.global) ? parsed.global.map(x => String(x).trim()).filter(Boolean) : data.global;
+          data.rooms = (parsed.rooms && typeof parsed.rooms === "object") ? parsed.rooms : data.rooms;
+        }
+      } else {
+        return res.status(400).json({ ok: false, error: "유효한 memory.json 형식이 아닙니다." });
       }
-      nextFacts = parsed.facts.map(x => String(x).trim()).filter(Boolean);
     } else if (Array.isArray(facts)) {
-      nextFacts = facts.map(x => String(x).trim()).filter(Boolean);
+      currentFacts = facts.map(x => String(x).trim()).filter(Boolean);
+      if (roomId && roomId !== "global") data.rooms[roomId] = currentFacts;
+      else data.global = currentFacts;
     } else if (Array.isArray(addFacts)) {
       addFacts.forEach(item => {
         const clean = String(item || "").trim();
-        if (clean && !nextFacts.includes(clean)) nextFacts.push(clean);
+        if (clean && !currentFacts.includes(clean)) currentFacts.push(clean);
       });
+      if (roomId && roomId !== "global") data.rooms[roomId] = currentFacts;
+      else data.global = currentFacts;
     } else {
-      return res.status(400).json({ ok: false, error: "facts 또는 addFacts가 필요합니다." });
+      return res.status(400).json({ ok: false, error: "facts, addFacts 또는 rawJson이 필요합니다." });
     }
-    fs.writeFileSync(MEMORY_PATH, JSON.stringify({ facts: nextFacts }, null, 2) + "\n", "utf8");
-    res.json({ ok: true, facts: nextFacts });
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
+    res.json({ ok: true, data, facts: readMemoryFacts(roomId) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/memory', (req, res) => {
+  try {
+    const { removeFact, roomId } = req.body || {};
+    let data = readMemoryData();
+    
+    if (removeFact) {
+      const cleanFact = String(removeFact).trim();
+      if (roomId && roomId !== "global" && data.rooms[roomId]) {
+        data.rooms[roomId] = data.rooms[roomId].filter(f => f !== cleanFact);
+      } else {
+        data.global = data.global.filter(f => f !== cleanFact);
+      }
+    } else if (roomId && roomId !== "global") {
+      delete data.rooms[roomId];
+    } else {
+      data.global = [];
+    }
+
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
+    res.json({ ok: true, data, facts: readMemoryFacts(roomId) });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }

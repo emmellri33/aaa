@@ -1430,6 +1430,62 @@
         return;
       }
 
+      // --- 12-2. 기억 3종(기억해, 기억 뭐 있어, 잊어버려) 가로채기 ---
+      const lowerPrompt = text.toLowerCase();
+      if (lowerPrompt.startsWith("기억해 ")) {
+        const fact = text.slice(4).trim();
+        if (fact) {
+          chatInput.value = "";
+          adjustTextareaHeight();
+          appendMsg("user", text);
+          try {
+            await fetch("/api/memory", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ addFacts: [fact], roomId: currentRoomId })
+            });
+            appendMsg("ai", `✅ 기억했습니다: "${escapeHtml(fact)}"`);
+          } catch (e) {
+            appendMsg("ai", "❌ 기억 저장 중 오류가 발생했습니다: " + e.message);
+          }
+          return;
+        }
+      } else if (lowerPrompt === "기억 뭐 있어" || lowerPrompt === "기억뭐있어") {
+        chatInput.value = "";
+        adjustTextareaHeight();
+        appendMsg("user", text);
+        try {
+          const r = await fetch("/api/memory?roomId=" + encodeURIComponent(currentRoomId));
+          const d = await r.json();
+          if (d.facts && d.facts.length > 0) {
+            appendMsg("ai", "🧠 현재 설정된 기억입니다:\n- " + d.facts.join("\n- "));
+          } else {
+            appendMsg("ai", "🧠 현재 설정된 기억이 없습니다.");
+          }
+        } catch (e) {
+          appendMsg("ai", "❌ 기억 조회 중 오류가 발생했습니다: " + e.message);
+        }
+        return;
+      } else if (lowerPrompt.startsWith("잊어버려 ")) {
+        const fact = text.slice(5).trim();
+        if (fact) {
+          chatInput.value = "";
+          adjustTextareaHeight();
+          appendMsg("user", text);
+          try {
+            await fetch("/api/memory", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ removeFact: fact, roomId: currentRoomId })
+            });
+            appendMsg("ai", `🗑️ 기억에서 삭제했습니다: "${escapeHtml(fact)}"`);
+          } catch (e) {
+            appendMsg("ai", "❌ 기억 삭제 중 오류가 발생했습니다: " + e.message);
+          }
+          return;
+        }
+      }
+
       let promptPayload = text;
       const textFiles = attachedFiles.filter(f => !f.isImage);
       const imageFiles = attachedFiles
