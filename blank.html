@@ -215,9 +215,15 @@
       <div class="split-card" id="previewCard">
         <div class="split-header">
           <span>🖥️ index.html 실시간 미리보기</span>
-          <button class="small-btn" onclick="document.getElementById('indexPreview').src='index.html?t='+Date.now()">🔄 새로고침</button>
+          <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <button class="small-btn" id="vpPhoneBtn" title="폰 뷰포트 390px">📱 390</button>
+            <button class="small-btn" id="vpDeskBtn" title="데스크톱 1920px">🖥 1920</button>
+            <button class="small-btn" id="vpResetBtn" title="뷰포트 리셋">↩ 리셋</button>
+            <button class="small-btn" onclick="document.getElementById('indexPreview').src='index.html?t='+Date.now()">🔄 새로고침</button>
+          </span>
         </div>
-        <iframe id="indexPreview" src="index.html"></iframe>
+        <div id="eyeReport" style="font-size:11.5px; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:4px 8px; margin-bottom:6px;">👁️ 눈: 대기 중 (패치 적용 후 자동 보고)</div>
+        <iframe id="indexPreview" src="index.html" style="flex:1; width:100%; margin:0 auto;"></iframe>
       </div>
     </div>
   </div>
@@ -537,6 +543,79 @@
     }
     loadIndexCode();
     reloadIndexBtn.onclick = loadIndexCode;
+
+    // --- 눈 v1: 뷰포트 조절 + getComputedStyle 보고 (서버 변경 없음, 읽기 전용) ---
+    function setPreviewViewport(px) {
+      const frame = document.getElementById("indexPreview");
+      const report = document.getElementById("eyeReport");
+      if (!frame) return;
+      if (!px) {
+        frame.style.width = "100%";
+        frame.style.maxWidth = "";
+        if (report) report.innerText = "👁️ 눈: 뷰포트 리셋 (100%)";
+        return;
+      }
+      frame.style.width = px + "px";
+      frame.style.maxWidth = "100%";
+      if (report) report.innerText = "👁️ 눈: 뷰포트 " + px + "px로 조절 — 적용 후 자동 보고";
+    }
+    function describeEl(win, el, label) {
+      try {
+        const cs = win.getComputedStyle(el);
+        return label + " color=" + cs.color + " bg=" + cs.backgroundColor + " display=" + cs.display + " fontSize=" + cs.fontSize + " visibility=" + cs.visibility;
+      } catch (e) {
+        return label + " 읽기 실패(" + String((e && e.message) || e).slice(0, 80) + ")";
+      }
+    }
+    async function runEyeReport(reason) {
+      const frame = document.getElementById("indexPreview");
+      const report = document.getElementById("eyeReport");
+      if (!frame || !report) return "(눈 UI 없음)";
+      // iframe 리로드 후 렌더 대기 (최대 3초 폴링)
+      try { frame.src = "index.html?t=" + Date.now(); } catch {}
+      let win = null;
+      for (let i = 0; i < 30; i++) {
+        try {
+          win = frame.contentWindow;
+          if (win && win.document && win.document.readyState === "complete" && win.document.querySelector("body")) break;
+        } catch {}
+        await new Promise(r => setTimeout(r, 100));
+        win = null;
+      }
+      try { win = frame.contentWindow; } catch {}
+      if (!win || !win.document) {
+        report.innerText = "👁️ 눈: 접근불가(iframe document 없음)" + (reason ? " — " + reason : "");
+        return report.innerText;
+      }
+      let doc = null;
+      try { doc = win.document; } catch (e) {
+        report.innerText = "👁️ 눈: 접근불가(" + String((e && e.message) || e).slice(0, 100) + ")";
+        return report.innerText;
+      }
+      const vw = (() => { try { return win.innerWidth; } catch { return -1; } })();
+      const dark = (() => { try { return doc.body ? doc.body.classList.contains("dark") : false; } catch { return false; } })();
+      const parts = ["뷰포트=" + vw + "px", "dark=" + (dark ? "ON" : "OFF")];
+      const hello = (() => { try { return doc.querySelector("#hello"); } catch { return null; } })();
+      if (hello) parts.push(describeEl(win, hello, "#hello"));
+      else {
+        const h1 = (() => { try { return doc.querySelector("h1"); } catch { return null; } })();
+        if (h1) parts.push(describeEl(win, h1, "h1"));
+        else parts.push("(#hello/h1 없음)");
+      }
+      const body = (() => { try { return doc.querySelector("body"); } catch { return null; } })();
+      if (body) parts.push(describeEl(win, body, "body"));
+      const line = "👁️ 눈" + (reason ? "(" + reason + ") " : " ") + parts.join(" · ");
+      report.innerText = line;
+      return line;
+    }
+    (function wireViewportBtns() {
+      const p = document.getElementById("vpPhoneBtn");
+      const d = document.getElementById("vpDeskBtn");
+      const r = document.getElementById("vpResetBtn");
+      if (p) p.onclick = () => { setPreviewViewport(390); runEyeReport("뷰포트 390"); };
+      if (d) d.onclick = () => { setPreviewViewport(1920); runEyeReport("뷰포트 1920"); };
+      if (r) r.onclick = () => { setPreviewViewport(0); runEyeReport("리셋"); };
+    })();
 
     // --- 10, 18, 19, 20. 대화방 관리 (최근 50개 localStorage) & 맥락 경고 & HANDOFF ---
     function loadRoomsState() {
@@ -1069,6 +1148,7 @@
           undoBtn.style.background = "#ea580c";
           statusSpan.style.color = "#059669";
           statusSpan.innerText = `✅ 전 조각(${edits.length}개) 원자적 반영됨 (1차 글자·공백 통과)`;
+          try { await runEyeReport("적용 후"); } catch (e) { statusSpan.innerText += " (눈 실패)"; }
         } else {
           disarmConfirm();
           const saveErr = resData.error || "저장 오류";
@@ -1098,6 +1178,7 @@
           applyBtn.style.cursor = "pointer";
           statusSpan.style.color = "#ea580c";
           statusSpan.innerText = "↩️ 전 조각 되돌리기 완료";
+          try { await runEyeReport("되돌리기 후"); } catch {}
         }
       };
 
