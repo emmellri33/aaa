@@ -327,12 +327,15 @@ function runAllowedCommandAsync(rawCmd) {
       }
       bin = "grep";
       args = cleanTokens;
+    } else if (cmd === "observe") {
+      bin = "node";
+      args = ["observe-local.js"];
     } else {
       recordSecurityOrToolFailure("run allowlist 외 명령 차단", cmd, "읽기 전용 allowlist 명령만 허용");
       return resolve({ ok: false, status: 400, error: "거부됨(400): allowlist 외 명령입니다." });
     }
-
-    execFile(bin, args, { cwd: __dirname, timeout: 5000 }, (err, stdout, stderr) => {
+    const runTimeout = (bin === "node" ? 180000 : 5000);
+    execFile(bin, args, { cwd: __dirname, timeout: runTimeout }, (err, stdout, stderr) => {
       const combined = (String(stdout || "") + (stderr ? "\n" + String(stderr) : "")).trim();
       const truncated = combined.length > 2000 ? combined.slice(0, 2000) + "\n...(2000자 절단됨)" : combined;
       if (err && err.code !== 1) {
