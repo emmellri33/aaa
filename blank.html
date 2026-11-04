@@ -1000,6 +1000,27 @@
       return attempt();
     }
 
+    // --- D: 직전 AI 턴 기억 + 막연한 후속에 문맥 동봉 (2중 구조의 2중) ---
+    let lastAiTurn = null; // { instruction, patch, at }
+    function isVagueFollowUp(text) {
+      const t = String(text || "").trim();
+      if (!t || !lastAiTurn || !lastAiTurn.patch) return false;
+      if (Date.now() - lastAiTurn.at > 10 * 60 * 1000) return false; // 10분 지나면 무관
+      if (/(안\s*됐|안\s*바뀌|못\s*바꿔|왜\s*안|다시|또|아직|그대로|틀렸|아니야|안\s*돼)/.test(t)) return true;
+      if (t.length <= 10) return true;
+      return false;
+    }
+    function withPrevContext(instruction) {
+      if (!isVagueFollowUp(instruction) || !lastAiTurn || !lastAiTurn.patch) return instruction;
+      const p = lastAiTurn.patch;
+      const summary = p.type === "patch"
+        ? ("type=patch, target=" + (p.target || "index.html") + ", 조각수=" + ((p.edits && p.edits.length) || 0) + ", 설명=" + String(p.explanation || "").slice(0, 200))
+        : ("type=question, 내용=" + String(p.question || "").slice(0, 200));
+      return "[막연한 후속 감지 — 직전 턴 문맥]\n- 직전 요청: " + String(lastAiTurn.instruction).slice(0, 200)
+        + "\n- 직전 AI 결과: " + summary
+        + "\n- 지시: 위 직전 결과에 대한 수정·재확인 요청으로 간주하고, 진의 가설 2~3개(색 미반영? 변형 누락? 캐시로 본 것?)를 눈·grep 증거로 대조한 뒤 패치 또는 질문 JSON으로 답하세요. 허공 질문 금지.\n\n[사용자 이번 요청]\n" + instruction;
+    }
+
     async function requestSelfHealRetry(originalInstruction, errorReason, attempt) {
       if (attempt > 3) {
         appendMsg("ai", `❓ [자가수복 3회 실패 — 확인 질문]\n패치 적용/검증 중 다음 오류가 계속 발생했습니다:\n(${errorReason})\n어떤 부분을 우선 수정할지 구체적으로 지정해 주시겠어요?`);
@@ -1360,23 +1381,25 @@
 
       try {
         if (actionMode.value === "modify-index") {
+          const effectiveInstruction = withPrevContext(promptPayload);
           const res = await fetchAiModifyWithRetry({
             target: "index",
-            instruction: promptPayload,
+            instruction: effectiveInstruction,
             currentContent: contextText.value,
             model: modelSelect.value,
             images: imageFiles
           }, currentAbortController.signal);
           const d = await res.json();
           loadingMsg.remove();
+          try { lastAiTurn = { instruction: promptPayload, patch: (d && d.patch) || null, at: Date.now() }; } catch {}
           if (!d.ok || !d.patch) {
             await logFailureToServer("패치 응답 생성 실패", d.error || "JSON 파싱 실패", "자가수복 재시도");
-            await requestSelfHealRetry(promptPayload, d.error || "유효한 JSON 패치가 아님", 1);
+            await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 JSON 패치가 아님", 1);
           } else if (d.patch.type === "question") {
             const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
             appendMsg("ai", `❓ ${toolBadge}[확인/답변]\n${d.patch.question}`);
           } else if (d.patch.type === "patch") {
-            appendPatchCard(d.patch, true, promptPayload, 0);
+            appendPatchCard(d.patch, true, effectiveInstruction, 0);
           }
         } else {
           const res = await fetch("/api/chat", {
