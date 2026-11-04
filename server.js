@@ -12,6 +12,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
 const FAILURES_PATH = path.join(__dirname, 'failures.md');
+const FAILURES_COLD_PATH = path.join(__dirname, 'failures-cold.md');
 const { execFile } = require('child_process');
 
 app.use(express.json({ limit: '20mb' }));
@@ -43,13 +44,26 @@ function readMemoryFacts() {
 function searchRelevantFailures(queryText) {
   try {
     if (!fs.existsSync(FAILURES_PATH)) return "";
-    const raw = fs.readFileSync(FAILURES_PATH, "utf8");
-    const lines = raw.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
-    if (lines.length === 0) return "";
+    const rawHot = fs.readFileSync(FAILURES_PATH, "utf8");
+    const hotLines = rawHot.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
+    
+    const recentHot = hotLines.slice(-5);
     const words = String(queryText || "").split(/\s+/).filter(w => w.length >= 2);
-    const matched = lines.filter(line => words.some(w => line.includes(w)));
-    const picked = (matched.length > 0 ? matched : lines).slice(-5);
-    return picked.join("\n");
+    
+    const hotMatched = recentHot.some(line => words.some(w => line.includes(w)));
+    let resultLines = [...recentHot];
+    
+    if (!hotMatched && words.length > 0 && fs.existsSync(FAILURES_COLD_PATH)) {
+      const rawCold = fs.readFileSync(FAILURES_COLD_PATH, "utf8");
+      const coldLines = rawCold.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
+      const matchedCold = coldLines.filter(line => words.some(w => line.includes(w)));
+      if (matchedCold.length > 0) {
+        resultLines = resultLines.concat(matchedCold.slice(-5));
+      }
+    }
+    
+    if (resultLines.length === 0) return "";
+    return resultLines.join("\n");
   } catch (e) {
     return "";
   }
@@ -263,11 +277,66 @@ function recordSecurityOrToolFailure(what, why, how) {
   try {
     const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
     const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
-    const row = "| " + ts + " | " + clean(what) + " | " + clean(why) + " | " + clean(how) + " |\n";
+    const cWhat = clean(what);
+    const cWhy = clean(why);
+    const cHow = clean(how);
+
     if (!fs.existsSync(FAILURES_PATH)) {
       fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
     }
-    fs.appendFileSync(FAILURES_PATH, row, "utf8");
+
+    const raw = fs.readFileSync(FAILURES_PATH, "utf8");
+    const allLines = raw.split("\n");
+    let header = "";
+    let lines = [];
+    
+    let pastHeader = false;
+    for (const line of allLines) {
+      if (!pastHeader) {
+        header += line + "\n";
+        if (line.startsWith("|---|")) {
+          pastHeader = true;
+        }
+      } else {
+        if (line.trim()) lines.push(line);
+      }
+    }
+
+    let found = false;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const cols = lines[i].split("|").map(s => s.trim());
+      if (cols.length >= 5 && cols[2] === cWhat && cols[3] === cWhy) {
+        let currentHow = cols[4];
+        let count = 1;
+        const match = currentHow.match(/(.*?)\s*×(\d+)$/);
+        if (match) {
+          count = parseInt(match[2], 10);
+          currentHow = match[1].trim();
+        }
+        count++;
+        lines[i] = `| ${ts} | ${cWhat} | ${cWhy} | ${currentHow} ×${count} |`;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      lines.push(`| ${ts} | ${cWhat} | ${cWhy} | ${cHow} |`);
+    }
+
+    let coldLines = [];
+    if (lines.length > 20) {
+      coldLines = lines.splice(0, lines.length - 20);
+    }
+
+    fs.writeFileSync(FAILURES_PATH, header + lines.join("\n") + "\n", "utf8");
+
+    if (coldLines.length > 0) {
+      if (!fs.existsSync(FAILURES_COLD_PATH)) {
+        fs.writeFileSync(FAILURES_COLD_PATH, "# 실패 일지 콜드 (failures-cold.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+      }
+      fs.appendFileSync(FAILURES_COLD_PATH, coldLines.join("\n") + "\n", "utf8");
+    }
   } catch (e) {}
 }
 
@@ -757,11 +826,67 @@ app.post('/api/failures', (req, res) => {
     const { when, what, why, how } = req.body || {};
     const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
     const ts = clean(when || new Date().toISOString().slice(0, 16).replace("T", " "));
-    const row = "| " + ts + " | " + clean(what) + " | " + clean(why) + " | " + clean(how) + " |\n";
+    const cWhat = clean(what);
+    const cWhy = clean(why);
+    const cHow = clean(how);
+
     if (!fs.existsSync(FAILURES_PATH)) {
       fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
     }
-    fs.appendFileSync(FAILURES_PATH, row, "utf8");
+
+    const raw = fs.readFileSync(FAILURES_PATH, "utf8");
+    const allLines = raw.split("\n");
+    let header = "";
+    let lines = [];
+    
+    let pastHeader = false;
+    for (const line of allLines) {
+      if (!pastHeader) {
+        header += line + "\n";
+        if (line.startsWith("|---|")) {
+          pastHeader = true;
+        }
+      } else {
+        if (line.trim()) lines.push(line);
+      }
+    }
+
+    let found = false;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const cols = lines[i].split("|").map(s => s.trim());
+      if (cols.length >= 5 && cols[2] === cWhat && cols[3] === cWhy) {
+        let currentHow = cols[4];
+        let count = 1;
+        const match = currentHow.match(/(.*?)\s*×(\d+)$/);
+        if (match) {
+          count = parseInt(match[2], 10);
+          currentHow = match[1].trim();
+        }
+        count++;
+        lines[i] = `| ${ts} | ${cWhat} | ${cWhy} | ${currentHow} ×${count} |`;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      lines.push(`| ${ts} | ${cWhat} | ${cWhy} | ${cHow} |`);
+    }
+
+    let coldLines = [];
+    if (lines.length > 20) {
+      coldLines = lines.splice(0, lines.length - 20);
+    }
+
+    fs.writeFileSync(FAILURES_PATH, header + lines.join("\n") + "\n", "utf8");
+
+    if (coldLines.length > 0) {
+      if (!fs.existsSync(FAILURES_COLD_PATH)) {
+        fs.writeFileSync(FAILURES_COLD_PATH, "# 실패 일지 콜드 (failures-cold.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+      }
+      fs.appendFileSync(FAILURES_COLD_PATH, coldLines.join("\n") + "\n", "utf8");
+    }
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
