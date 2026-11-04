@@ -133,6 +133,10 @@ app.post('/api/chat', async (req, res) => {
       contents: buildMultimodalContents(prompt, images),
     });
     const reply = (response && response.text) ? response.text : '(응답 없음)';
+    if (!String(reply).trimStart().startsWith("[의도]")) {
+      recordSecurityOrToolFailure("의도첫줄 누락(채팅)", String(msg).slice(0, 60), "프롬프트 규칙 1항 위반");
+      return res.status(422).json({ ok: false, error: "거부됨(422): 답변 첫 줄 [의도] 누락. 규칙 1항을 지켜 다시 작성하세요.", reply });
+    }
     return res.json({ reply });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
