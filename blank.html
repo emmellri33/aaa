@@ -1046,9 +1046,13 @@
         const badge = !existsNow
           ? "⚠️ 원본 불일치"
           : (!wsCheck.ok ? ("⚠️ " + wsCheck.reason) : "✅ 매치 및 공백 검증 통과");
+        // 영향 보고: 동일 search의 원본 내 출현 횟수 (2회+면 다크모드 같은 변형 잔존 의심)
+        let occ = 0;
+        try { occ = ed.search ? contextText.value.split(ed.search).length - 1 : 0; } catch { occ = 0; }
+        const impact = !existsNow ? "" : (occ >= 2 ? ` · ⚠️ 출현 ${occ}회(변형 잔존 의심)` : ` · 출현 ${occ}회`);
         return `
           <div style="border:1px solid #e2e8f0; border-radius:8px; padding:8px; margin-bottom:8px; background:#ffffff;">
-            <div style="font-size:11.5px; font-weight:700; color:#334155; margin-bottom:4px;">🧩 조각 ${idx + 1} / ${edits.length} — <span>${badge}</span></div>
+            <div style="font-size:11.5px; font-weight:700; color:#334155; margin-bottom:4px;">🧩 조각 ${idx + 1} / ${edits.length} — <span>${badge}${impact}</span></div>
             <div style="font-size:11px; color:#dc2626; font-weight:600; margin-bottom:2px;">- 찾을 조각 (search)</div>
             <pre style="background:#fee2e2; color:#991b1b; padding:8px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; margin-bottom:6px;">${escapeHtml(ed.search)}</pre>
             <div style="font-size:11px; color:#059669; font-weight:600; margin-bottom:2px;">+ 바꿀 조각 (replace)</div>
