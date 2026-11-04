@@ -1225,6 +1225,9 @@
         if (discardBtn) discardBtn.style.display = "none";
 
         backupContent = current;
+        // live 보호 v2: 패치 카드 확인 선택자(없으면 기본 #hello)로 렌더 검증 후 자동 롤백
+        const confirmSelector = (patch && patch.confirmSelector) ? patch.confirmSelector : "#hello";
+
         const r = await fetch("/api/page/index", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1233,8 +1236,61 @@
         const resData = await r.json();
         if (resData.ok) {
           await loadIndexCode();
+
+          // [렌더 기준 트리거 검증]
+          let rollbackReason = "";
+          // 1) Health 체크 실패
+          try {
+            const hRes = await fetch("/health");
+            if (!hRes.ok) rollbackReason = "Health 체크 실패";
+          } catch {
+            rollbackReason = "Health 서버 통신 불가";
+          }
+
+          // 2) 렌더(iframe) 검증: 확인 선택자 존재 여부
+          if (!rollbackReason) {
+            try {
+              const frame = document.getElementById("indexPreview");
+              const win = frame ? frame.contentWindow : null;
+              const doc = win ? win.document : null;
+              if (!doc) {
+                rollbackReason = "iframe document 접근 불가";
+              } else {
+                if (!doc.querySelector(confirmSelector)) {
+                  rollbackReason = `패치 카드 확인 선택자(${confirmSelector})가 렌더에 존재하지 않음`;
+                }
+              }
+            } catch (e) {
+              rollbackReason = "iframe 렌더 검증 예외: " + e.message;
+            }
+          }
+
+          // [자동 롤백 실행]
+          if (rollbackReason) {
+            try {
+              const rbRes = await fetch("/api/rollback", { method: "POST" });
+              const rbJson = await rbRes.json();
+              if (!rbJson.ok) throw new Error(rbJson.error || "rollback failed");
+              await loadIndexCode();
+              await runEyeReport("자동 롤백 후", { reload: true });
+              disarmConfirm();
+              applyBtn.disabled = false;
+              applyBtn.style.opacity = "1";
+              applyBtn.style.cursor = "pointer";
+              statusSpan.style.color = "#dc2626";
+              statusSpan.innerText = `자동 롤백됨 (사유: ${rollbackReason})`;
+              await logFailureToServer("렌더 검증 실패 자동 롤백", rollbackReason, "디스크 스냅샷으로 즉시 복원됨");
+              return;
+            } catch (rbErr) {
+              statusSpan.style.color = "#dc2626";
+              statusSpan.innerText = "롤백 실패: " + rbErr.message;
+              await logFailureToServer("롤백 실패", rbErr.message, "복원 중단");
+              return;
+            }
+          }
+
           applyBtn.disabled = true;
-          applyBtn.innerText = "✅ 적용됨";
+          applyBtn.innerText = "적용됨";
           applyBtn.style.opacity = "0.5";
           applyBtn.style.cursor = "not-allowed";
           undoBtn.disabled = false;
@@ -1242,8 +1298,8 @@
           undoBtn.style.cursor = "pointer";
           undoBtn.style.background = "#ea580c";
           statusSpan.style.color = "#059669";
-          statusSpan.innerText = `✅ 전 조각(${edits.length}개) 원자적 반영됨 (1차 글자·공백 통과)`;
-          try { await runEyeReport("적용 후"); } catch (e) { statusSpan.innerText += " (눈 실패)"; }
+          statusSpan.innerText = `전 조각(${edits.length}개) 원자적 반영됨 (렌더 검증 통과)`;
+          try { await runEyeReport("적응 후"); } catch (e) { statusSpan.innerText += " (눈 실패)"; }
         } else {
           disarmConfirm();
           const saveErr = resData.error || "저장 오류";

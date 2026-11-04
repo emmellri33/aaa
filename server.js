@@ -156,6 +156,34 @@ app.get('/api/page/index', (req, res) => {
   });
 });
 
+// --- live 보호 v2 (live-v2-snapshot-middleware): 저장 직전 디스크 스냅샷 (원본 핸들러로 next() 통과, 중복 route 없음) ---
+const SNAPSHOT_META_PATH = path.join(__dirname, 'snapshot-meta.json');
+function saveSnapshotToDisk(content) {
+  try {
+    fs.writeFileSync(SNAPSHOT_META_PATH, JSON.stringify({ content, timestamp: new Date().toISOString() }, null, 2), "utf8");
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function loadSnapshotFromDisk() {
+  try {
+    if (!fs.existsSync(SNAPSHOT_META_PATH)) return null;
+    const data = JSON.parse(fs.readFileSync(SNAPSHOT_META_PATH, "utf8"));
+    return typeof data.content === "string" ? data.content : null;
+  } catch (e) {
+    return null;
+  }
+}
+app.post('/api/page/index', (req, res, next) => {
+  try {
+    if (req.body && typeof req.body.content === 'string' && fs.existsSync(INDEX_PATH)) {
+      saveSnapshotToDisk(fs.readFileSync(INDEX_PATH, 'utf8'));
+    }
+  } catch (e) {}
+  next();
+});
+
 app.post('/api/page/index', (req, res) => {
   const { content } = req.body || {};
   if (typeof content !== 'string') return res.status(400).json({ error: 'content required' });
@@ -870,6 +898,27 @@ function runGitStep(args) {
     });
   });
 }
+
+// --- live 보호 v2: 디스크 스냅샷 자동 복원 (복원 후 재확인 포함) ---
+app.post('/api/rollback', async (req, res) => {
+  try {
+    const backup = loadSnapshotFromDisk();
+    if (!backup) {
+      return res.status(404).json({ ok: false, error: "복원할 디스크 스냅샷이 없습니다." });
+    }
+    fs.writeFileSync(INDEX_PATH, backup, 'utf8');
+    const verified = fs.readFileSync(INDEX_PATH, 'utf8') === backup;
+    if (!verified) {
+      recordSecurityOrToolFailure("롤백 실패", "복원 후 재확인 불일치", "디스크 복원 검증 실패");
+      return res.status(500).json({ ok: false, error: "복원 후 재확인 실패" });
+    }
+    recordSecurityOrToolFailure("확정 후 자동롤백 실행", "렌더 검증 실패로 디스크 백업본 원복 완료", "디스크 스냅샷 복원＋재확인 성공");
+    res.json({ ok: true, verified: true, message: "자동 롤백 완료" });
+  } catch (e) {
+    recordSecurityOrToolFailure("롤백 실패", e.message, "디스크 복원 중 예외 발생");
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 app.post('/api/snapshot', async (req, res) => {
   try {

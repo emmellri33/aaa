@@ -1,6 +1,14 @@
 {
   "facts": [
     "작업 디렉토리는 /workspaces/aaa 이며 편집 대상은 index.html 이다.",
-    "기본 모델은 gemini-3.5-flash-lite 이다."
+    "기본 모델은 gemini-3.5-flash-lite 이다.",
+    "[뭘] (의도: H1 색상 변경) index.html의 #hello 선택자와 body.dark #hello 선택자의 color 값을 blue에서 orange로 총 2곳 변경합니다 / [왜] (근거: 7행 `#hello { /       color: blue;` 및 53행 `body.dark #hello { color: blue; }` 코드 인용) / [추측] 다크모드와 라이트모드 모두 주황색으로 통일하기 위해 두 곳 모두 변경합니다",
+    "[뭘] (의도: H1 색상 변경) index.html의 #hello 선택자와 body.dark #hello 선택자의 color 값을 orange에서 blue로 총 2곳 변경합니다 / [왜] (근거: index.html 8행의 `#hello { /       color: orange;` 및 56행의 `body.dark #hello { color: orange; }`)",
+    "[뭘] (의도: '안녕하세요' 텍스트의 각 글자마다 무지개 색상 등 개별 색상을 적용하기 위해 HTML 구조를 span 태그들로 쪼갬) index.html의 h1#hello 요소를 각 글자별 span 태그로 분리하고, 스타일 태그에 각 span의 색상 규칙을 추가함 (총 2곳 수정) / [왜] (근거: 7번 줄 `<h1 id=\"hello\">안녕하세요</h1>` 및 9~13번 줄 `#hello { color: blue; ... }` 코드를 인용하여 글자별 개별 제어가 가능하도록 변경)",
+    "[뭘] (의도: 사용자 의도 요약) h2 태그의 '멍청이 목록' 텍스트를 무지개 색상 글자로 쪼개어 적용하기 위해 총 1곳을 수정합니다 / [왜] (근거: 49번째 줄 <h2 style=\"color: yellow;\">멍청이 목록</h2> [추측] 각 글자별로 span 태그를 나누고 무지개 색상을 부여하여 안녕 세로처럼 무지개 효과를 냄)",
+    "[뭘] (의도: 사용자 의도 요약) 빈 페이지로 이동 버튼의 크기를 줄이고 텍스트를 edit으로 변경 (총 2곳) / [왜] (근거: index.html 101~107행 #blank-btn 스타일 및 122행 버튼 태그 내용 수정)",
+    "최근 요청 점검: 출력 없음, 다음 단계 / git status --short 출력 없음은 이미 확인済. git status 재실행과 커밋안은 취소한다(커밋할 변경이 없음). “제공해주신  / cat 지시 취소. 앵커 재확인은 네 grep 도구로 네가 직접 수행하라. B 산출물의 앵커 2개만 확인하면 된다. index.html 전체 덤",
+    ".env 및 API 키/포트 설정은 절대 수정하지 말 것",
+    "search 조각은 현재 index.html에 100% 존재하는 문자열만 사용할 것"
   ]
 }
