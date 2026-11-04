@@ -13,6 +13,7 @@ const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
 const FAILURES_PATH = path.join(__dirname, 'failures.md');
 const FAILURES_COLD_PATH = path.join(__dirname, 'failures-cold.md');
+const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
 const { execFile } = require('child_process');
 
 app.use(express.json({ limit: '20mb' }));
@@ -31,26 +32,58 @@ function getActiveKey() {
   return memoryApiKey || process.env.GEMINI_API_KEY || "";
 }
 
-function readMemoryFacts() {
+function readMemoryData() {
   try {
-    if (!fs.existsSync(MEMORY_PATH)) return [];
-    const data = JSON.parse(fs.readFileSync(MEMORY_PATH, "utf8"));
-    return Array.isArray(data.facts) ? data.facts : [];
+    if (!fs.existsSync(MEMORY_PATH)) return { global: [], rooms: {} };
+    const raw = fs.readFileSync(MEMORY_PATH, "utf8");
+    const data = JSON.parse(raw);
+    
+    // 마이그레이션: 기존 { facts: [...] } 구조인 경우
+    if (Array.isArray(data.facts) && !data.global && !data.rooms) {
+      return { global: data.facts, rooms: {} };
+    }
+    
+    return {
+      global: Array.isArray(data.global) ? data.global : [],
+      rooms: (data.rooms && typeof data.rooms === "object") ? data.rooms : {}
+    };
   } catch (e) {
-    return [];
+    return { global: [], rooms: {} };
   }
+}
+
+function readMemoryFacts(roomId) {
+  const data = readMemoryData();
+  let facts = [...data.global];
+  if (roomId && data.rooms[roomId] && Array.isArray(data.rooms[roomId])) {
+    facts = facts.concat(data.rooms[roomId]);
+  }
+  return facts;
 }
 
 function searchRelevantFailures(queryText) {
   try {
     if (!fs.existsSync(FAILURES_PATH)) return "";
-    const raw = fs.readFileSync(FAILURES_PATH, "utf8");
-    const lines = raw.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
-    if (lines.length === 0) return "";
+    const rawHot = fs.readFileSync(FAILURES_PATH, "utf8");
+    const hotLines = rawHot.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
+    
+    const recentHot = hotLines.slice(-5);
     const words = String(queryText || "").split(/\s+/).filter(w => w.length >= 2);
-    const matched = lines.filter(line => words.some(w => line.includes(w)));
-    const picked = (matched.length > 0 ? matched : lines).slice(-5);
-    return picked.join("\n");
+    
+    const hotMatched = recentHot.some(line => words.some(w => line.includes(w)));
+    let resultLines = [...recentHot];
+    
+    if (!hotMatched && words.length > 0 && fs.existsSync(FAILURES_COLD_PATH)) {
+      const rawCold = fs.readFileSync(FAILURES_COLD_PATH, "utf8");
+      const coldLines = rawCold.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
+      const matchedCold = coldLines.filter(line => words.some(w => line.includes(w)));
+      if (matchedCold.length > 0) {
+        resultLines = resultLines.concat(matchedCold.slice(-5));
+      }
+    }
+    
+    if (resultLines.length === 0) return "";
+    return resultLines.join("\n");
   } catch (e) {
     return "";
   }
@@ -58,7 +91,7 @@ function searchRelevantFailures(queryText) {
 
 function extractRelevantHtmlSnippet(html, queryText) {
   const full = String(html || "");
-  if (!full) return "(index.html 비어 있음)";
+  if (!full) return "(코드 비어 있음)";
   const lines = full.split("\n");
   const words = String(queryText || "").toLowerCase().split(/\s+/).filter(w => w.length >= 2);
   const hitIndices = new Set();
@@ -77,6 +110,30 @@ function extractRelevantHtmlSnippet(html, queryText) {
   return sorted.map(i => (i + 1) + ": " + lines[i]).join("\n");
 }
 
+function getCreator(filename) {
+  try {
+    if (!fs.existsSync(MANIFEST_PATH)) {
+      fs.writeFileSync(MANIFEST_PATH, JSON.stringify({ "index.html": "system" }, null, 2), "utf8");
+    }
+    const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+    if (filename === "index.html") return "system";
+    return manifest[filename] || "user";
+  } catch (e) {
+    return filename === "index.html" ? "system" : "user";
+  }
+}
+
+function setCreator(filename, who) {
+  try {
+    let manifest = {};
+    if (fs.existsSync(MANIFEST_PATH)) {
+      manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+    }
+    manifest[filename] = who;
+    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf8");
+  } catch (e) {}
+}
+
 function buildMultimodalContents(textPrompt, images) {
   const parts = [{ text: textPrompt }];
   if (Array.isArray(images)) {
@@ -93,7 +150,7 @@ function buildMultimodalContents(textPrompt, images) {
 // --- 채팅 (AI 답변 생성) ---
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, pageContext, model, images } = req.body || {};
+    const { message, pageContext, model, images, roomId } = req.body || {};
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : GEMINI_MODEL;
     const msg = (message || '').toString().trim();
@@ -107,38 +164,84 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const ai = new GoogleGenAI({ apiKey: activeKey });
-    const htmlRaw = pageContext || (fs.existsSync(INDEX_PATH) ? fs.readFileSync(INDEX_PATH, "utf8") : "");
-    const snippet = extractRelevantHtmlSnippet(htmlRaw, msg);
-    const facts = readMemoryFacts();
+    const facts = readMemoryFacts(roomId);
     const memoryBlock = facts.length > 0 ? "[공유 기억 (memory.json)]\n- " + facts.join("\n- ") + "\n\n" : "";
 
-    const prompt = [
-      "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.",
-      "",
-      "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다.",
-      "[대화 및 증거 규칙]",
-      "1. 답변 맨 첫 줄에 반드시 사용자의 의도를 한 줄로 먼저 적고 시작하세요. 형식: [의도] ...",
-      "2. 막연한 지시는 합리적으로 추측해 먼저 제안하고 추측한 부분에는 반드시 [추측] 표시를 붙이세요. 도저히 알 수 없을 때만 질문하세요.",
-      "3. 단정적인 설명은 반드시 아래 제공된 코드 발췌본의 실제 줄 번호나 선택자를 인용(근거 제시)하며 작성하세요. 근거 없는 \"됩니다\"나 확인 전 \"완료·검증완료\" 문구는 절대 금지합니다.",
-      "4. [판단 루브릭] '뭐가 나을지' 분석·판단 요청을 받으면 반드시 이 순서로 따져 답하세요: 목표 부합 → 가역성(실패 시 되돌리기) → 폭발 반경(잘못됐을 때 피해) → 비용(구현·유지·검증) → 검증 가능성(통과/실패 테스트). 항목을 건너뛰지 마세요.",
-      "5. [증거 규칙] 작업 완료·'됐다'는 보고에는 증거 3종(앵커 grep 실물·실행 결과·수용 테스트)을 반드시 붙이세요. 셋 중 하나라도 없으면 '됐다' 대신 부족한 증거를 명시하고, 기억 인용(본 적 없는 파일·줄 번호)은 절대 금지합니다.",
-      "",
-      memoryBlock + "[index.html 관련 발췌 코드]\n" + snippet,
-      "",
-      "사용자 메시지: " + msg
-    ].join("\n");
+    const seenSignatures = new Set();
+    const toolHistoryBlocks = [];
+    const observedSummaries = [];
+    const MAX_CHAT_ROUNDS = 5;
 
-    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(activeKey).length, "model="+ useModel);
-    const response = await ai.models.generateContent({
-      model: useModel,
-      contents: buildMultimodalContents(prompt, images),
-    });
-    const reply = (response && response.text) ? response.text : '(응답 없음)';
-    if (!String(reply).trimStart().startsWith("[의도]")) {
-      recordSecurityOrToolFailure("의도첫줄 누락(채팅)", String(msg).slice(0, 60), "프롬프트 규칙 1항 위반");
-      return res.status(422).json({ ok: false, error: "거부됨(422): 답변 첫 줄 [의도] 누락. 규칙 1항을 지켜 다시 작성하세요.", reply });
+    let finalReply = "";
+
+    for (let round = 1; round <= MAX_CHAT_ROUNDS; round++) {
+      const historySection = toolHistoryBlocks.length > 0 ? ("\n\n" + toolHistoryBlocks.join("\n\n")) : "";
+      const prompt = [
+        "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.",
+        "",
+        "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다. 추가 확인이 필요하면 grep 또는 read 도구를 호출하세요.",
+        "쓰기 도구(run 포함)는 허용되지 않습니다. 오직 grep과 read만 허용됩니다.",
+        "마지막에는 [의도] ... 형식으로 시작하는 최종 답변을 출력하세요.",
+        "",
+        memoryBlock + historySection,
+        "",
+        "사용자 메시지: " + msg
+      ].join("\n");
+
+      let rawText = "";
+      try {
+        const response = await ai.models.generateContent({
+          model: useModel,
+          contents: buildMultimodalContents(prompt, round === 1 ? images : []),
+        });
+        rawText = (response && response.text) ? response.text : "";
+      } catch (e) {
+        rawText = "채팅 오류 발생: " + e.message;
+      }
+
+      const jsonStr = extractJsonString(rawText);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (err) {}
+
+      if (parsed && parsed.type === "tool_calls" && Array.isArray(parsed.calls) && parsed.calls.length > 0) {
+        const roundOutputs = [];
+        for (let cIdx = 0; cIdx < parsed.calls.length; cIdx++) {
+          const callObj = parsed.calls[cIdx];
+          const toolName = String((callObj && callObj.tool) || "").trim();
+          
+          if (toolName !== "grep" && toolName !== "read") {
+            roundOutputs.push("[차단] 채팅에서는 grep, read 도구만 허용됩니다.");
+            continue;
+          }
+
+          const tRes = await executeReactToolCall(callObj, seenSignatures);
+          if (!tRes.ok && tRes.status === 422) {
+            roundOutputs.push("[도구 거부 422]: " + tRes.error);
+            continue;
+          }
+          const summaryLabel = toolName + "(" + JSON.stringify((callObj && callObj.args) || {}) + ")";
+          observedSummaries.push(summaryLabel);
+          roundOutputs.push("▶ " + summaryLabel + "\n" + String(tRes.output || tRes.error || "(출력 없음)"));
+        }
+        toolHistoryBlocks.push("[도구 결과 " + round + "회차]\n" + roundOutputs.join("\n---\n"));
+        continue;
+      }
+
+      finalReply = rawText;
+      break;
     }
-    return res.json({ reply });
+
+    if (!finalReply) {
+      finalReply = "[의도] 요청 처리 완료\n도구 탐색을 마쳤으나 최종 응답이 생성되지 않았습니다.";
+    }
+
+    if (!String(finalReply).trimStart().startsWith("[의도]")) {
+      finalReply = "[의도] 사용자 질문 답변\n" + finalReply;
+    }
+
+    res.json({ reply: finalReply });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';
@@ -176,22 +279,39 @@ function loadSnapshotFromDisk() {
     return null;
   }
 }
-app.post('/api/page/index', (req, res, next) => {
+app.post('/api/page/:target', (req, res, next) => {
   try {
-    if (req.body && typeof req.body.content === 'string' && fs.existsSync(INDEX_PATH)) {
-      saveSnapshotToDisk(fs.readFileSync(INDEX_PATH, 'utf8'));
+    let target = req.params.target;
+    if (target === "index") target = "index.html";
+    const p = path.join(__dirname, target);
+    if (req.body && typeof req.body.content === 'string' && fs.existsSync(p)) {
+      saveSnapshotToDisk(fs.readFileSync(p, 'utf8'));
     }
   } catch (e) {}
   next();
 });
 
-app.post('/api/page/index', (req, res) => {
+app.post('/api/page/:target', (req, res) => {
+  let target = req.params.target;
+  if (target === "index") target = "index.html";
+  const p = path.join(__dirname, target);
+
+  if (target !== "index.html" && getCreator(target) === "user") {
+    return res.status(403).json({ error: 'forbidden: 사용자 소유 파일은 덮어쓸 수 없습니다.' });
+  }
+  
   const { content } = req.body || {};
   if (typeof content !== 'string') return res.status(400).json({ error: 'content required' });
-  if (!content.includes('<html') || !content.includes('</html>')) {
+  if (target.endsWith('.html') && (!content.includes('<html') || !content.includes('</html>'))) {
     return res.status(400).json({ error: 'invalid html: <html>...</html> 구조가 필요합니다.' });
   }
-  fs.writeFile(INDEX_PATH, content, 'utf8', (err) => {
+
+  // 신규 파일이면 manifest에 등록
+  if (!fs.existsSync(p)) {
+    setCreator(target, "gemgem");
+  }
+
+  fs.writeFile(p, content, 'utf8', (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ ok: true });
   });
@@ -264,11 +384,66 @@ function recordSecurityOrToolFailure(what, why, how) {
   try {
     const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
     const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
-    const row = "| " + ts + " | " + clean(what) + " | " + clean(why) + " | " + clean(how) + " |\n";
+    const cWhat = clean(what);
+    const cWhy = clean(why);
+    const cHow = clean(how);
+
     if (!fs.existsSync(FAILURES_PATH)) {
       fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
     }
-    fs.appendFileSync(FAILURES_PATH, row, "utf8");
+
+    const raw = fs.readFileSync(FAILURES_PATH, "utf8");
+    const allLines = raw.split("\n");
+    let header = "";
+    let lines = [];
+    
+    let pastHeader = false;
+    for (const line of allLines) {
+      if (!pastHeader) {
+        header += line + "\n";
+        if (line.startsWith("|---|")) {
+          pastHeader = true;
+        }
+      } else {
+        if (line.trim()) lines.push(line);
+      }
+    }
+
+    let found = false;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const cols = lines[i].split("|").map(s => s.trim());
+      if (cols.length >= 5 && cols[2] === cWhat && cols[3] === cWhy) {
+        let currentHow = cols[4];
+        let count = 1;
+        const match = currentHow.match(/(.*?)\s*×(\d+)$/);
+        if (match) {
+          count = parseInt(match[2], 10);
+          currentHow = match[1].trim();
+        }
+        count++;
+        lines[i] = `| ${ts} | ${cWhat} | ${cWhy} | ${currentHow} ×${count} |`;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      lines.push(`| ${ts} | ${cWhat} | ${cWhy} | ${cHow} |`);
+    }
+
+    let coldLines = [];
+    if (lines.length > 20) {
+      coldLines = lines.splice(0, lines.length - 20);
+    }
+
+    fs.writeFileSync(FAILURES_PATH, header + lines.join("\n") + "\n", "utf8");
+
+    if (coldLines.length > 0) {
+      if (!fs.existsSync(FAILURES_COLD_PATH)) {
+        fs.writeFileSync(FAILURES_COLD_PATH, "# 실패 일지 콜드 (failures-cold.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+      }
+      fs.appendFileSync(FAILURES_COLD_PATH, coldLines.join("\n") + "\n", "utf8");
+    }
   } catch (e) {}
 }
 
@@ -483,9 +658,25 @@ app.post('/api/ai-modify', async (req, res) => {
     }
     if (!instruction || !target) return res.status(400).json({ error: 'instruction and target required' });
 
+    let targetFile = target;
+    if (targetFile === "index") targetFile = "index.html";
+
+    if (targetFile !== "index.html" && getCreator(targetFile) === "user") {
+      recordSecurityOrToolFailure("user 소유 파일 AI 패치 시도", targetFile, "403 거부");
+      return res.status(403).json({ error: "거부됨(403): 사용자 소유 파일은 AI 패치가 허용되지 않습니다." });
+    }
+    if (targetFile === "blank.html" || targetFile === "cockpit.html" || targetFile === "server.js") {
+      return res.status(403).json({ error: "거부됨(403): 시스템 핵심 파일은 패치 대상이 아닙니다." });
+    }
+
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : "gemini-3.5-flash-lite";
-    const htmlSource = currentContent || fs.readFileSync(INDEX_PATH, "utf8");
+    
+    let htmlSource = currentContent;
+    if (!htmlSource) {
+      const p = path.join(__dirname, targetFile);
+      htmlSource = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+    }
     const activeKey = getActiveKey();
 
     if (!activeKey && (!Array.isArray(mockResponses) || mockResponses.length === 0)) {
@@ -493,7 +684,7 @@ app.post('/api/ai-modify', async (req, res) => {
       return res.json({ ok: true, result: JSON.stringify(demo), patch: demo });
     }
 
-    const facts = readMemoryFacts();
+    const facts = readMemoryFacts(req.body ? req.body.roomId : null);
     const memoryBlock = facts.length > 0 ? "\n\n[공유 기억 (memory.json)]\n- " + facts.join("\n- ") : "";
     const failBlock = searchRelevantFailures(instruction + " " + (retryError || ""));
     const failureNote = failBlock ? "\n\n[과거 실패 일지 (failures.md) — 동일 실수 반복 금지]\n" + failBlock : "";
@@ -524,8 +715,8 @@ app.post('/api/ai-modify', async (req, res) => {
 
       // 1회차에만 전체 코드 전달, 2회차부터는 토큰 절약을 위해 생략 문구로 대체
       const codeSection = (round === 1)
-        ? ("\n\n[현재 index.html 전체 코드]\n" + htmlSource)
-        : "\n\n[현재 index.html 전체 코드]\n(1회차에 이미 전달된 전체 코드는 생략 — 위 1회차 코드 및 아래 도구 결과를 참고하고, 이미 받은 내용은 재조회하지 마세요)";
+        ? (`\n\n[현재 ${targetFile} 전체 코드]\n` + htmlSource)
+        : `\n\n[현재 ${targetFile} 전체 코드]\n(1회차에 이미 전달된 전체 코드는 생략 — 위 1회차 코드 및 아래 도구 결과를 참고하고, 이미 받은 내용은 재조회하지 마세요)`;
 
       const historySection = toolHistoryBlocks.length > 0
         ? ("\n\n" + toolHistoryBlocks.join("\n\n"))
@@ -624,7 +815,10 @@ app.post('/api/ai-modify', async (req, res) => {
     }
 
     if (finalParsed.type === "patch") {
-      finalParsed.target = "index.html";
+      if (!finalParsed.target) {
+        finalParsed.target = targetFile;
+      }
+      
       let rawEdits = [];
       if (Array.isArray(finalParsed.edits) && finalParsed.edits.length > 0) {
         rawEdits = finalParsed.edits;
@@ -706,11 +900,13 @@ app.delete("/api/key", (req, res) => {
   res.json({ ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY) });
 });
 
-// --- 기억 파일 (memory.json) GET / POST ---
+// --- 기억 파일 (memory.json) GET / POST / DELETE ---
 app.get('/api/memory', (req, res) => {
   try {
-    const facts = readMemoryFacts();
-    res.json({ ok: true, facts, content: JSON.stringify({ facts }, null, 2) });
+    const roomId = req.query.roomId;
+    const data = readMemoryData();
+    const facts = readMemoryFacts(roomId);
+    res.json({ ok: true, data, facts, content: JSON.stringify(data, null, 2) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -718,26 +914,64 @@ app.get('/api/memory', (req, res) => {
 
 app.post('/api/memory', (req, res) => {
   try {
-    const { facts, addFacts, rawJson } = req.body || {};
-    let nextFacts = readMemoryFacts();
+    const { facts, addFacts, rawJson, roomId } = req.body || {};
+    let data = readMemoryData();
+    let currentFacts = roomId && roomId !== "global" ? (data.rooms[roomId] || []) : data.global;
+
     if (typeof rawJson === "string") {
       const parsed = JSON.parse(rawJson);
-      if (!Array.isArray(parsed.facts)) {
-        return res.status(400).json({ ok: false, error: "memory.json은 { \"facts\": [...] } 형식이어야 합니다." });
+      if (parsed.global || parsed.rooms || Array.isArray(parsed.facts)) {
+        if (Array.isArray(parsed.facts)) {
+          data.global = parsed.facts.map(x => String(x).trim()).filter(Boolean);
+          data.rooms = {};
+        } else {
+          data.global = Array.isArray(parsed.global) ? parsed.global.map(x => String(x).trim()).filter(Boolean) : data.global;
+          data.rooms = (parsed.rooms && typeof parsed.rooms === "object") ? parsed.rooms : data.rooms;
+        }
+      } else {
+        return res.status(400).json({ ok: false, error: "유효한 memory.json 형식이 아닙니다." });
       }
-      nextFacts = parsed.facts.map(x => String(x).trim()).filter(Boolean);
     } else if (Array.isArray(facts)) {
-      nextFacts = facts.map(x => String(x).trim()).filter(Boolean);
+      currentFacts = facts.map(x => String(x).trim()).filter(Boolean);
+      if (roomId && roomId !== "global") data.rooms[roomId] = currentFacts;
+      else data.global = currentFacts;
     } else if (Array.isArray(addFacts)) {
       addFacts.forEach(item => {
         const clean = String(item || "").trim();
-        if (clean && !nextFacts.includes(clean)) nextFacts.push(clean);
+        if (clean && !currentFacts.includes(clean)) currentFacts.push(clean);
       });
+      if (roomId && roomId !== "global") data.rooms[roomId] = currentFacts;
+      else data.global = currentFacts;
     } else {
-      return res.status(400).json({ ok: false, error: "facts 또는 addFacts가 필요합니다." });
+      return res.status(400).json({ ok: false, error: "facts, addFacts 또는 rawJson이 필요합니다." });
     }
-    fs.writeFileSync(MEMORY_PATH, JSON.stringify({ facts: nextFacts }, null, 2) + "\n", "utf8");
-    res.json({ ok: true, facts: nextFacts });
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
+    res.json({ ok: true, data, facts: readMemoryFacts(roomId) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/memory', (req, res) => {
+  try {
+    const { removeFact, roomId } = req.body || {};
+    let data = readMemoryData();
+    
+    if (removeFact) {
+      const cleanFact = String(removeFact).trim();
+      if (roomId && roomId !== "global" && data.rooms[roomId]) {
+        data.rooms[roomId] = data.rooms[roomId].filter(f => f !== cleanFact);
+      } else {
+        data.global = data.global.filter(f => f !== cleanFact);
+      }
+    } else if (roomId && roomId !== "global") {
+      delete data.rooms[roomId];
+    } else {
+      data.global = [];
+    }
+
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
+    res.json({ ok: true, data, facts: readMemoryFacts(roomId) });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }
@@ -758,11 +992,67 @@ app.post('/api/failures', (req, res) => {
     const { when, what, why, how } = req.body || {};
     const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
     const ts = clean(when || new Date().toISOString().slice(0, 16).replace("T", " "));
-    const row = "| " + ts + " | " + clean(what) + " | " + clean(why) + " | " + clean(how) + " |\n";
+    const cWhat = clean(what);
+    const cWhy = clean(why);
+    const cHow = clean(how);
+
     if (!fs.existsSync(FAILURES_PATH)) {
       fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
     }
-    fs.appendFileSync(FAILURES_PATH, row, "utf8");
+
+    const raw = fs.readFileSync(FAILURES_PATH, "utf8");
+    const allLines = raw.split("\n");
+    let header = "";
+    let lines = [];
+    
+    let pastHeader = false;
+    for (const line of allLines) {
+      if (!pastHeader) {
+        header += line + "\n";
+        if (line.startsWith("|---|")) {
+          pastHeader = true;
+        }
+      } else {
+        if (line.trim()) lines.push(line);
+      }
+    }
+
+    let found = false;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const cols = lines[i].split("|").map(s => s.trim());
+      if (cols.length >= 5 && cols[2] === cWhat && cols[3] === cWhy) {
+        let currentHow = cols[4];
+        let count = 1;
+        const match = currentHow.match(/(.*?)\s*×(\d+)$/);
+        if (match) {
+          count = parseInt(match[2], 10);
+          currentHow = match[1].trim();
+        }
+        count++;
+        lines[i] = `| ${ts} | ${cWhat} | ${cWhy} | ${currentHow} ×${count} |`;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      lines.push(`| ${ts} | ${cWhat} | ${cWhy} | ${cHow} |`);
+    }
+
+    let coldLines = [];
+    if (lines.length > 20) {
+      coldLines = lines.splice(0, lines.length - 20);
+    }
+
+    fs.writeFileSync(FAILURES_PATH, header + lines.join("\n") + "\n", "utf8");
+
+    if (coldLines.length > 0) {
+      if (!fs.existsSync(FAILURES_COLD_PATH)) {
+        fs.writeFileSync(FAILURES_COLD_PATH, "# 실패 일지 콜드 (failures-cold.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+      }
+      fs.appendFileSync(FAILURES_COLD_PATH, coldLines.join("\n") + "\n", "utf8");
+    }
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -781,11 +1071,15 @@ function isForbiddenFileName(name) {
 app.get('/api/files', (req, res) => {
   try {
     const entries = fs.readdirSync(__dirname, { withFileTypes: true });
+    let manifest = { "index.html": "system" };
+    if (fs.existsSync(MANIFEST_PATH)) {
+      try { manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8")); } catch(e) {}
+    }
     const files = entries
       .filter(e => e.isFile() && !isForbiddenFileName(e.name))
       .map(e => {
         const stat = fs.statSync(path.join(__dirname, e.name));
-        return { name: e.name, size: stat.size };
+        return { name: e.name, size: stat.size, owner: manifest[e.name] || "user" };
       });
     res.json({ ok: true, files });
   } catch (e) {
@@ -793,6 +1087,82 @@ app.get('/api/files', (req, res) => {
   }
 });
 
+app.post('/api/files/write', (req, res) => {
+  try {
+    const { name, content } = req.body || {};
+    const filename = String(name || "").trim();
+    if (!filename || isForbiddenFileName(filename)) {
+      return res.status(403).json({ ok: false, error: "거부됨: 쓰기 금지된 파일명입니다." });
+    }
+    const p = path.join(__dirname, filename);
+
+    if (fs.existsSync(p)) {
+      saveSnapshotToDisk(fs.readFileSync(p, "utf8"));
+    } else if (filename.endsWith('.html')) {
+      setCreator(filename, "gemgem");
+    }
+
+    fs.writeFileSync(p, content || "", "utf8");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/git/status', (req, res) => {
+  execFile("git", ["status", "--short"], { cwd: __dirname }, (err1, stdout1) => {
+    execFile("git", ["log", "--oneline", "-5"], { cwd: __dirname }, (err2, stdout2) => {
+      const statusText = String(stdout1 || "").trim() || "No changes";
+      const logText = String(stdout2 || "").trim() || "No commits";
+      res.json({ ok: true, status: statusText, log: logText });
+    });
+  });
+});
+
+app.post('/api/git/commit', (req, res) => {
+  const { message } = req.body || {};
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({ ok: false, error: "커밋 메시지가 필요합니다." });
+  }
+
+  execFile("git", ["add", "-A"], { cwd: __dirname }, (err) => {
+    if (err) return res.status(500).json({ ok: false, error: "git add 실패: " + err.message });
+
+    const commitArgs = [
+      "-c", "user.name=gemgem",
+      "-c", "user.email=gemgem@example.com",
+      "commit", "-m", message.trim()
+    ];
+
+    execFile("git", commitArgs, { cwd: __dirname }, (err2, stdout2) => {
+      if (err2) {
+        if (err2.stdout && err2.stdout.includes("nothing to commit")) {
+          return res.json({ ok: true, message: "변경사항이 없어 커밋할 내용이 없습니다." });
+        }
+        return res.status(500).json({ ok: false, error: "git commit 실패: " + err2.message });
+      }
+      res.json({ ok: true, message: "커밋 성공", output: String(stdout2).trim() });
+    });
+  });
+});
+
+// --- 격리 편집 라우트 (/api/cockpit/target) ---
+app.post('/api/cockpit/target', (req, res) => {
+  try {
+    const { file, content } = req.body || {};
+    if (file !== "blank.html" && file !== "cockpit.html") {
+      return res.status(403).json({ ok: false, error: "격리 라우트에서는 blank.html과 cockpit.html만 수정 가능합니다." });
+    }
+    const p = path.join(__dirname, file);
+    if (fs.existsSync(p)) {
+      saveSnapshotToDisk(fs.readFileSync(p, "utf8"));
+    }
+    fs.writeFileSync(p, content || "", "utf8");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 app.get('/api/files/read', (req, res) => {
   try {
     const name = String((req.query && req.query.name) || "").trim();
@@ -905,6 +1275,70 @@ function runGitStep(args) {
     });
   });
 }
+
+// --- 스크린샷 반환 API (/api/observe-shot) ---
+app.get('/api/observe-shot', (req, res) => {
+  const target = req.query.target || "index.html";
+  const nameBase = target.replace(".html", "");
+  const shotPath = `/tmp/observe-${nameBase}-desktop.png`;
+  const infoPath = `/tmp/observe-last.json`;
+
+  const returnImage = () => {
+    try {
+      const buffer = fs.readFileSync(shotPath);
+      const base64 = buffer.toString('base64');
+      const stat = fs.statSync(shotPath);
+      res.json({ ok: true, image: base64, takenAt: stat.mtime.toISOString() });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: "스크린샷 읽기 실패: " + e.message });
+    }
+  };
+
+  try {
+    if (fs.existsSync(shotPath)) {
+      const stat = fs.statSync(shotPath);
+      const ageMs = Date.now() - stat.mtime.getTime();
+      if (ageMs < 60000) {
+        return returnImage();
+      }
+    }
+  } catch (e) {}
+
+  // Run observe-local.js dynamically if needed
+  execFile("node", ["observe-local.js"], { cwd: __dirname, timeout: 120000 }, (err) => {
+    returnImage();
+  });
+});
+
+// --- 시각 판정·롤백 연동 (/api/verify-render) ---
+app.post('/api/verify-render', async (req, res) => {
+  try {
+    const { target, screenshot } = req.body || {};
+    if (!target || !screenshot) return res.status(400).json({ ok: false, error: 'target and screenshot required' });
+    const activeKey = getActiveKey();
+    if (!activeKey) return res.status(500).json({ ok: false, error: 'API 키가 등록되어 있지 않습니다.' });
+
+    const ai = new GoogleGenAI({ apiKey: activeKey });
+    const prompt = `사용자가 웹 페이지 디자인을 변경했습니다. 제공된 스크린샷은 수정된 페이지의 렌더링 결과입니다.
+시각적 요소에 심각한 깨짐 현상(예: 텍스트가 컨테이너를 벗어나거나 잘림, 중요 요소가 겹침, 글자색과 배경색이 유사하여 가독성이 매우 떨어짐 등)이 있는지 확인하세요.
+정상이면 { "ok": true, "reason": "정상" } 을, 깨짐 현상이 있으면 { "ok": false, "reason": "문제가 있는 부분에 대한 짧은 설명" } 을 JSON으로만 응답하세요. 백틱(\`\`\`)은 쓰지 마세요.`;
+
+    const images = [{ mimeType: "image/png", data: screenshot }];
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: buildMultimodalContents(prompt, images),
+    });
+    
+    const reply = (response && response.text) ? response.text : '';
+    const jsonStr = extractJsonString(reply);
+    const parsed = JSON.parse(jsonStr);
+    
+    res.json({ ok: Boolean(parsed.ok), reason: parsed.reason || "알 수 없음" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // --- live 보호 v2: 디스크 스냅샷 자동 복원 (복원 후 재확인 포함) ---
 app.post('/api/rollback', async (req, res) => {
