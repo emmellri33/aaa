@@ -9,3 +9,4 @@
 | 2026-11-03 22:00 | read 금지 파일 차단(400) | file=.env | allowlist 파일만 read 허용 |
 | 2026-11-03 22:00 | ReAct 3회차 초과 미결 | 없는 요소 찾기 | 3회 탐색 후 question 종료 |
 | 2026-11-03 22:01 | read 금지 파일 차단(400) | file=.env | allowlist 파일만 read 허용 |
+| 2026-11-03 22:01 | ReAct 3회차 초과 미결 | 없는 요소 찾기 | 3회 탐색 후 question 종료 |

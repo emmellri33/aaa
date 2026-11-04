@@ -550,7 +550,7 @@ function runAllowedCommandAsync(rawCmd) {
   });
 }
 
-async function executeReactToolCall(call, seenSignatures = new Set()) {
+async function executeReactToolCall(call, seenSignatures = new Set(), strictRepeat = false) {
   if (!call || typeof call !== "object") {
     return { ok: false, status: 400, error: "유효하지 않은 tool_call 형식입니다." };
   }
@@ -564,11 +564,21 @@ async function executeReactToolCall(call, seenSignatures = new Set()) {
     return { ok: false, status: 422, error: msg };
   }
 
-  // 중복 호출 방지용 시그니처 체크
+  // 중복·고착 호출 방지용 시그니처 체크 (정확일치＋유사)
   const sig = tool + ":" + JSON.stringify(args);
-  if (seenSignatures.has(sig)) {
+  const sigFile = (tool === "grep") ? String(args.file || "index.html").trim() : ((tool === "read") ? String(args.file || "").trim() : "(run)");
+  const sigRaw = String((tool === "grep") ? args.pattern : ((tool === "read") ? (args.file + " " + args.start + "-" + args.end) : args.cmd) || "");
+  const sigNP = sigRaw.toLowerCase().replace(/[^가-힣a-z0-9#._-]/g, "");
+  if (!seenSignatures._hist) seenSignatures._hist = [];
+  const priorHit = seenSignatures._hist.find((h) => h.tool === tool && h.file === sigFile && sigNP && h.np && (h.np === sigNP || (h.np.length >= 4 && sigNP.length >= 4 && (h.np.indexOf(sigNP) >= 0 || sigNP.indexOf(h.np) >= 0))));
+  if (seenSignatures.has(sig) || priorHit) {
+    const prior = priorHit ? (priorHit.tool + " " + priorHit.file + " " + priorHit.raw) : sig;
+    if (strictRepeat) {
+      return { ok: false, status: 200, error: "[고착 차단] 이미 시도한 탐색입니다 (" + prior + "). 같은 파일·패턴 재시도 금지 — 위 [폐기·시도済 명단]을 보고 완전히 다른 가설로 가세요." };
+    }
     return { ok: true, status: 200, tool, output: "(이미 동일한 내용 조회함 — 중복 호출 생략)" };
   }
+  seenSignatures._hist.push({ tool: tool, file: sigFile, np: sigNP, raw: sigRaw.slice(0, 80) });
   seenSignatures.add(sig);
 
   // 2. grep: { pattern, file? }
@@ -723,8 +733,11 @@ app.post('/api/ai-modify', async (req, res) => {
         ? ("\n\n" + toolHistoryBlocks.join("\n\n"))
         : "";
 
+      const bannedBlock = observedSummaries.length > 0
+        ? ("\n[폐기·시도済 명단 — 같은 파일·선택자·패턴 재시도 금지, 반드시 다른 가설로]\n- " + observedSummaries.slice(-8).join("\n- "))
+        : "";
       const roundHint = (round > 1)
-        ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 직전 가설을 유지하거나 같은 실패 패턴/호출을 반복하지 마시고, 새 가설 2~3개를 세운 뒤 grep/read 증거로 대조하여 즉시 patch 또는 question JSON을 출력하세요.")
+        ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 직전 가설을 유지하거나 같은 실패 패턴/호출을 반복하지 마시고, 새 가설 2~3개를 세운 뒤 grep/read 증거로 대조하여 즉시 patch 또는 question JSON을 출력하세요." + bannedBlock)
         : "";
 
       const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
@@ -786,7 +799,7 @@ app.post('/api/ai-modify', async (req, res) => {
             }
           }
 
-          const tRes = await executeReactToolCall(callObj, seenSignatures);
+          const tRes = await executeReactToolCall(callObj, seenSignatures, true);
           if (!tRes.ok && (tRes.status === 400 || tRes.status === 422)) {
             return res.status(tRes.status).json({ ok: false, error: tRes.error });
           }
