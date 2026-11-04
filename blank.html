@@ -173,10 +173,9 @@
           <option value="gemini-4-argon">Gemini 4 Argon (유료·실험)</option>
         </select>
         
-        <label style="font-size: 13px; font-weight: 600; margin-left: 6px;">작업 모드:</label>
-        <select id="actionMode">
-          <option value="modify-index">index.html 직접 수정</option>
-          <option value="chat">일반 대화 및 파일 생성</option>
+        <label style="font-size: 13px; font-weight: 600; margin-left: 6px;">대상 페이지:</label>
+        <select id="targetPageSelect">
+          <option value="index.html" selected>index.html</option>
         </select>
 
         <button id="clearChatBtn" class="small-btn danger" style="margin-left:auto;" title="현재 대화방 기록 지우기">🗑️ 지우기</button>
@@ -304,7 +303,7 @@
     const saveKeyBtn = document.getElementById("saveKeyBtn");
     const keyStatus = document.getElementById("keyStatus");
     const modelSelect = document.getElementById("modelSelect");
-    const actionMode = document.getElementById("actionMode");
+    const targetPageSelect = document.getElementById("targetPageSelect");
     const chatMessages = document.getElementById("chatMessages");
     const chatInput = document.getElementById("chatInput");
     const sendBtn = document.getElementById("sendBtn");
@@ -326,6 +325,44 @@
     const handoffBtn = document.getElementById("handoffBtn");
     const clearChatBtn = document.getElementById("clearChatBtn");
     const currentRoomBadge = document.getElementById("currentRoomBadge");
+
+    // --- 대상 페이지 선택기 갱신 및 이벤트 ---
+    async function updateTargetPageSelect() {
+      try {
+        const r = await fetch("/api/files");
+        const d = await r.json();
+        if (!d.ok) return;
+        const currentTarget = targetPageSelect.value || "index.html";
+        targetPageSelect.innerHTML = "";
+        
+        const validFiles = d.files.filter(f => f.name === "index.html" || (f.name.endsWith(".html") && f.owner === "gemgem"));
+        
+        validFiles.forEach(f => {
+          const opt = document.createElement("option");
+          opt.value = f.name;
+          opt.innerText = f.name;
+          if (f.name === currentTarget) opt.selected = true;
+          targetPageSelect.appendChild(opt);
+        });
+        
+        // 만약 선택되어 있던 파일이 삭제되었다면 index.html로 폴백
+        if (!validFiles.some(f => f.name === currentTarget)) {
+          targetPageSelect.value = "index.html";
+        }
+      } catch (e) {}
+    }
+
+    targetPageSelect.onchange = () => {
+      const target = targetPageSelect.value;
+      const frame = document.getElementById("indexPreview");
+      if (frame) {
+        try { frame.removeAttribute("srcdoc"); } catch {}
+        frame.src = target + "?t=" + Date.now();
+      }
+      loadIndexCode();
+    };
+
+    updateTargetPageSelect();
 
     // 기본 모델(gemini-3.5-flash-lite) 선택
     if (modelSelect.querySelector('option[value="gemini-3.5-flash-lite"]')) {
@@ -564,7 +601,8 @@
 
     async function loadIndexCode() {
       try {
-        const r = await fetch("/api/page/index");
+        const target = targetPageSelect ? targetPageSelect.value : "index.html";
+        const r = await fetch("/api/files/read?name=" + encodeURIComponent(target));
         const d = await r.json();
         contextText.value = d.content || "";
         setStagingMode(false);
@@ -1512,52 +1550,28 @@
       setPendingState(true);
 
       try {
-        if (actionMode.value === "modify-index") {
-          const effectiveInstruction = withPrevContext(promptPayload);
-          const res = await fetchAiModifyWithRetry({
-            target: "index",
-            instruction: effectiveInstruction,
-            currentContent: contextText.value,
-            model: modelSelect.value,
-            images: imageFiles
-          }, currentAbortController.signal);
-          const d = await res.json();
-          loadingMsg.remove();
-          try { lastAiTurn = { instruction: promptPayload, patch: (d && d.patch) || null, at: Date.now() }; } catch {}
-          if (!d.ok || !d.patch) {
-            await logFailureToServer("패치 응답 생성 실패", d.error || "JSON 파싱 실패", "자가수복 재시도");
-            await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 JSON 패치가 아님", 1);
-          } else if (d.patch.type === "question") {
-            const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
-            appendMsg("ai", `❓ ${toolBadge}[확인/답변]\n${d.patch.question}`);
-          } else if (d.patch.type === "patch") {
-            appendPatchCard(d.patch, true, effectiveInstruction, 0);
-          }
-        } else {
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: currentAbortController.signal,
-            body: JSON.stringify({
-              message: promptPayload,
-              pageContext: contextText.value,
-              model: modelSelect.value,
-              images: imageFiles
-            })
-          });
-          const d = await res.json();
-          loadingMsg.remove();
-          const reply = d.reply || d.text || (d.error ? ("❌ " + d.error) : "응답이 없습니다.");
-          const codeMatch = reply.match(/```([a-zA-Z0-9]+)?\n([\s\S]*?)```/);
-          let fileData = null;
-          if (codeMatch) {
-            const ext = codeMatch[1] || "txt";
-            const explicitDownload = /파일로 만들어줘|다운로드|파일로 줘/.test(promptPayload);
-            if (explicitDownload) {
-              fileData = { filename: `generated-output.${ext}`, content: codeMatch[2] };
-            }
-          }
-          appendMsg("ai", reply, fileData);
+        const effectiveInstruction = withPrevContext(promptPayload);
+        const res = await fetchAiModifyWithRetry({
+          target: targetPageSelect ? targetPageSelect.value : "index.html",
+          instruction: effectiveInstruction,
+          currentContent: contextText.value,
+          model: modelSelect.value,
+          images: imageFiles
+        }, currentAbortController.signal);
+        
+        const d = await res.json();
+        loadingMsg.remove();
+        
+        try { lastAiTurn = { instruction: promptPayload, patch: (d && d.patch) || null, at: Date.now() }; } catch {}
+        
+        if (!d.ok || !d.patch) {
+          await logFailureToServer("AI 응답 생성 실패", d.error || "JSON 파싱 실패", "자가수복 재시도");
+          await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 AI 응답이 아님", 1);
+        } else if (d.patch.type === "question") {
+          const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
+          appendMsg("ai", `❓ ${toolBadge}[의도 확인 및 답변]\n${d.patch.question}`);
+        } else if (d.patch.type === "patch") {
+          appendPatchCard(d.patch, true, effectiveInstruction, 0);
         }
       } catch (e) {
         loadingMsg.remove();
@@ -1568,6 +1582,7 @@
         }
       } finally {
         setPendingState(false);
+        updateTargetPageSelect();
       }
     }
 

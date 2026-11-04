@@ -1025,11 +1025,15 @@ function isForbiddenFileName(name) {
 app.get('/api/files', (req, res) => {
   try {
     const entries = fs.readdirSync(__dirname, { withFileTypes: true });
+    let manifest = { "index.html": "system" };
+    if (fs.existsSync(MANIFEST_PATH)) {
+      try { manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8")); } catch(e) {}
+    }
     const files = entries
       .filter(e => e.isFile() && !isForbiddenFileName(e.name))
       .map(e => {
         const stat = fs.statSync(path.join(__dirname, e.name));
-        return { name: e.name, size: stat.size };
+        return { name: e.name, size: stat.size, owner: manifest[e.name] || "user" };
       });
     res.json({ ok: true, files });
   } catch (e) {
