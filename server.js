@@ -698,6 +698,10 @@ app.post("/api/key", (req, res) => {
   memoryApiKey = (req.body && req.body.apiKey) || "";
   res.json({ ok: true, hasKey: Boolean(memoryApiKey) });
 });
+app.delete("/api/key", (req, res) => {
+  memoryApiKey = "";
+  res.json({ ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY) });
+});
 
 // --- 기억 파일 (memory.json) GET / POST ---
 app.get('/api/memory', (req, res) => {

@@ -149,6 +149,7 @@
           <div class="menu-key-row">
             <input type="password" id="apiKeyInput" placeholder="API 키 입력" />
             <button id="saveKeyBtn">등록</button>
+            <button id="clearKeyBtn" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:11px; font-weight:600;">해제</button>
           </div>
         </div>
       </div>
@@ -375,6 +376,16 @@
         apiKeyInput.value = "";
         alert("서버 메모리에 등록되었습니다.");
       }
+    };
+
+    document.getElementById("clearKeyBtn").onclick = async () => {
+      const res = await fetch("/api/key", {
+        method: "DELETE"
+      });
+      const d = await res.json();
+      keyStatus.innerText = d.hasKey ? "🟢" : "🔴 키 미등록";
+      keyStatus.title = d.hasKey ? "서버 연결됨 (API 키 활성)" : "API 키 미등록 (··· 메뉴에서 등록)";
+      apiKeyInput.value = "";
     };
 
     // 소스코드 패널 토글 (기본 숨김)
@@ -1476,7 +1487,10 @@
           let fileData = null;
           if (codeMatch) {
             const ext = codeMatch[1] || "txt";
-            fileData = { filename: `generated-output.${ext}`, content: codeMatch[2] };
+            const explicitDownload = /파일로 만들어줘|다운로드|파일로 줘/.test(promptPayload);
+            if (explicitDownload) {
+              fileData = { filename: `generated-output.${ext}`, content: codeMatch[2] };
+            }
           }
           appendMsg("ai", reply, fileData);
         }
