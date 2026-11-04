@@ -991,24 +991,33 @@
       } catch {}
     }
 
-    // --- 재시도: /api/ai-modify 전송 실패(네트워크 오류·5xx) 시 1회만 자동 재시도 (중지·400·422는 재시도 안 함) ---
+    // --- 재시도: /api/ai-modify 전송 실패 시 최대 3회 자동 재시도 ---
     async function fetchAiModifyWithRetry(payload, signal) {
       const body = JSON.stringify(payload);
-      const attempt = () => fetch("/api/ai-modify", {
+      const attemptFetch = () => fetch("/api/ai-modify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal,
         body
       });
-      try {
-        const first = await attempt();
-        if (first.status !== 500 && first.status !== 502 && first.status !== 503 && first.status !== 504) return first;
-      } catch (e) {
-        if (e && e.name === "AbortError") throw e;
+
+      let lastRes = null;
+      for (let attemptCount = 1; attemptCount <= 3; attemptCount++) {
+        try {
+          const res = await attemptFetch();
+          if (res.status !== 500 && res.status !== 502 && res.status !== 503 && res.status !== 504) {
+            return res;
+          }
+          lastRes = res;
+        } catch (e) {
+          if (e && e.name === "AbortError") throw e;
+        }
+        if (attemptCount < 3) {
+          await new Promise(r => setTimeout(r, 1000));
+          console.info(`🔄 /api/ai-modify 자동 재시도 (${attemptCount}/3회)`);
+        }
       }
-      await new Promise(r => setTimeout(r, 1000));
-      console.info("🔄 /api/ai-modify 자동 재시도(1회)");
-      return attempt();
+      return lastRes || attemptFetch();
     }
 
     // --- D: 직전 AI 턴 기억 + 막연한 후속에 문맥 동봉 (2중 구조의 2중) ---

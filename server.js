@@ -207,16 +207,16 @@ const PATCH_SYSTEM_PROMPT = [
   "2. [의도 추론 & 추측 표시] 지시가 다소 막연하더라도 파일 맥락상 합리적으로 추측 가능하면 질문하지 말고 먼저 패치를 제안하되, 추측한 부분에는 반드시 [추측] 표시를 넣으세요. 사용자가 단순 질문(예: 특정 선택자의 색상이 무엇인지 등)을 한 경우에는 패치하지 말고 도구(grep/read)로 확인한 뒤 question 필드에 줄 번호·코드를 인용하여 답변하세요.",
   "3. [전수 탐색 & 다조각 edits 필수] 패치 전 대상 선택자·속성·값의 모든 변형(예: 기본 선택자와 다크모드 body.dark 변형, 미디어쿼리 등)을 전수 탐색하세요. 변형이 여러 곳에 존재하면 절대 1곳만 고치지 말고, 반드시 edits 배열에 모든 조각을 빠짐없이 담아 한 번에 반환하세요.",
   "4. [공백·줄바꿈·기존 속성 100% 보존] search에는 원본 index.html에 존재하는 글자·들여쓰기 공백·줄바꿈(\n)을 토씨 하나 틀리지 않고 그대로 넣으세요. replace 작성 시에도 수정 대상 값만 바꾸고, 같은 블록 내 다른 속성(예: font-size: 64px;, font-weight: bold; 등)과 줄바꿈·들여쓰기·콜론 뒤 공백을 원본과 100% 똑같이 유지하세요.",
-  "5. [증거 인용 & 완료 문구 금지] 단정은 반드시 grep·read 결과나 줄 번호 인용과 함께 작성하세요. 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
+  "5. [가설수립·전복 & 증거 인용] 매 라운드 가설 2~3개(예: 색 미반영? 변형 누락? 캐시/다른 선택자?)를 세우고 grep·read 증거로 대조하여 탈락시키세요. 같은 실패가 반복되면 기존 가설을 완전히 폐기하고 새 가설로 갈아타야 합니다. 단정은 반드시 grep·read 결과나 줄 번호 인용과 함께 작성하세요. 실제 기계검증 전이므로 설명에 \"완료\", \"검증완료\", 근거 없는 \"됩니다\"라는 단어를 절대 쓰지 마세요.",
   "6. [설명 2줄 규격] explanation 필드는 결론 먼저 짧게 반드시 아래 두 줄 형식으로만 작성하세요:",
   "   [뭘] (의도: 사용자 의도 요약) 무엇을 어떻게 바꾸는지 결론 한 줄 (다조각이면 총 몇 곳인지 명시)",
   "   [왜] (근거: 매치된 기존 선택자/코드 인용, 추측 시 [추측] 명시) 바꾸는 이유 한 줄",
-  "7. [ReAct 도구 호출 규격 (최대 3라운드)] 추가 파일 검색이나 줄 번호/코드 확인이 필요할 때만 아래 JSON 규격으로 도구를 호출하세요 (예시 1개):",
+  "7. [ReAct 도구 호출 규격 (최대 10라운드, 누적 12회 제한)] 추가 파일 검색이나 줄 번호/코드 확인이 필요할 때만 아래 JSON 규격으로 도구를 호출하세요 (예시 1개):",
   "   {\"type\":\"tool_calls\",\"calls\":[{\"tool\":\"grep\",\"args\":{\"pattern\":\"#hello\",\"file\":\"index.html\"}}]}",
   "   - 사용 가능 도구: grep({pattern, file?}), read({file, start, end}), run({cmd})",
   "   - 1회차에 이미 받은 전체 코드 내용을 불필요하게 반복 read하지 마세요. 단, 사용자가 질문만 했거나 다른 파일/정확한 줄 번호 인용이 필요하면 grep을 1회 호출해 확인하세요.",
   "   - 같은 호출 반복 금지. 라운드당 run 도구는 최대 1회만 허용됩니다.",
-  "   - 반드시 3회 안에 patch 또는 question으로 끝내세요. 3회 안에 못 찾겠으면 question에 지금까지 본 것과 필요한 증거를 적으세요.",
+  "   - 반드시 최대 10라운드 안에 patch 또는 question으로 끝내세요. 누적 도구 호출이 12회를 초과하거나 10라운드 안에 못 찾겠으면 question에 지금까지 본 것과 필요한 증거를 적으세요.",
   "8. 지시를 패치로 수행할 수 있으면 아래 다조각 JSON 규격만 반환하세요:",
   "{\"type\":\"patch\",\"explanation\":\"[뭘] (의도: ...) ...\\n[왜] (근거: ...) ...\",\"target\":\"index.html\",\"edits\":[{\"search\":\"원본 조각 1\",\"replace\":\"새 조각 1\"},{\"search\":\"원본 조각 2\",\"replace\":\"새 조각 2\"}]}",
   "9. 단순 질문에 대한 코드 인용 답변이거나, 대상이 아예 없어 확인이 필요할 때는 아래 JSON 규격만 반환하세요:",
@@ -503,18 +503,19 @@ app.post('/api/ai-modify', async (req, res) => {
     const toolHistoryBlocks = [];
     const observedSummaries = [];
     let toolRoundsUsed = 0;
+    let totalToolCallsCount = 0;
     const loopStartTime = Date.now();
-    const MAX_ROUNDS = 3;
+    const MAX_ROUNDS = 10;
     const TIME_LIMIT_MS = 120000;
 
     let finalParsed = null;
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
-      if (Date.now() - loopStartTime > TIME_LIMIT_MS) {
-        recordSecurityOrToolFailure("ReAct 루프 시간 초과(120초)", instruction.slice(0, 80), "질문 카드로 강제 종료");
+      if (Date.now() - loopStartTime > TIME_LIMIT_MS || totalToolCallsCount > 12) {
+        recordSecurityOrToolFailure("ReAct 루프 제한 초과(시간 또는 12회 초과)", instruction.slice(0, 80), "질문 카드로 강제 종료");
         finalParsed = {
           type: "question",
-          question: "[시간 초과 중단] 도구 탐색이 120초를 초과하여 중단했습니다. 지금까지 확인한 내용: " + (observedSummaries.join(" / ") || "없음") + ". 수정할 위치의 코드 조각을 직접 알려주시겠어요?",
+          question: "[12회 초과 및 제한 중단] 도구 탐색 누적 횟수(" + totalToolCallsCount + "회)가 12회를 초과했거나 제한에 도달했습니다. 지금까지 본 것: " + (observedSummaries.join(" / ") || "없음") + ". 필요한 증거와 함께 수정할 위치의 코드 조각을 직접 알려주시겠어요?",
           toolRounds: toolRoundsUsed
         };
         break;
@@ -530,7 +531,7 @@ app.post('/api/ai-modify', async (req, res) => {
         : "";
 
       const roundHint = (round > 1)
-        ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 같은 도구 호출을 반복하지 말고, 충분한 근거가 모였으면 즉시 patch 또는 question JSON을 출력하세요.")
+        ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 직전 가설을 유지하거나 같은 실패 패턴/호출을 반복하지 마시고, 새 가설 2~3개를 세운 뒤 grep/read 증거로 대조하여 즉시 patch 또는 question JSON을 출력하세요.")
         : "";
 
       const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
@@ -564,12 +565,13 @@ app.post('/api/ai-modify', async (req, res) => {
       }
 
       if (parsed.type === "tool_calls" && Array.isArray(parsed.calls) && parsed.calls.length > 0) {
-        if (round === MAX_ROUNDS) {
-          // 3회차에서도 patch/question이 안 나오면 강제 question 종료
-          recordSecurityOrToolFailure("ReAct 3회차 초과 미결", instruction.slice(0, 80), "3회 탐색 후 question 종료");
+        totalToolCallsCount += parsed.calls.length;
+        if (round === MAX_ROUNDS || totalToolCallsCount > 12) {
+          // 최대 라운드 또는 누적 12회 초과 시 강제 question 종료
+          recordSecurityOrToolFailure("ReAct 최대 라운드 또는 12회 초과 미결", instruction.slice(0, 80), "탐색 후 question 종료");
           finalParsed = {
             type: "question",
-            question: "3번 봐도 못 찾음 — 지금까지 본 것: [" + (observedSummaries.join("; ") || "도구 호출 시도") + "]. 필요한 증거: 수정하려는 대상의 정확한 선택자나 텍스트 조각을 붙여주시겠어요?",
+            question: "12회 초과 또는 탐색 한계 도달 — 지금까지 본 것: [" + (observedSummaries.join("; ") || "도구 호출 시도") + "]. 필요한 증거와 함께 수정할 위치의 코드 조각을 직접 알려주시겠어요?",
             toolRounds: toolRoundsUsed
           };
           break;
@@ -611,7 +613,7 @@ app.post('/api/ai-modify', async (req, res) => {
     if (!finalParsed) {
       finalParsed = {
         type: "question",
-        question: "3번 봐도 못 찾음 — 지금까지 본 것: [" + (observedSummaries.join("; ") || "없음") + "]. 필요한 증거: 대상 요소의 정확한 이름이나 코드를 알려주시겠어요?",
+        question: "탐색 한계 도달 — 지금까지 본 것: [" + (observedSummaries.join("; ") || "없음") + "]. 필요한 증거: 대상 요소의 정확한 이름이나 코드를 알려주시겠어요?",
         toolRounds: toolRoundsUsed
       };
     }
