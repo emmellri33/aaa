@@ -1154,6 +1154,70 @@ function runGitStep(args) {
   });
 }
 
+// --- 스크린샷 반환 API (/api/observe-shot) ---
+app.get('/api/observe-shot', (req, res) => {
+  const target = req.query.target || "index.html";
+  const nameBase = target.replace(".html", "");
+  const shotPath = `/tmp/observe-${nameBase}-desktop.png`;
+  const infoPath = `/tmp/observe-last.json`;
+
+  const returnImage = () => {
+    try {
+      const buffer = fs.readFileSync(shotPath);
+      const base64 = buffer.toString('base64');
+      const stat = fs.statSync(shotPath);
+      res.json({ ok: true, image: base64, takenAt: stat.mtime.toISOString() });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: "스크린샷 읽기 실패: " + e.message });
+    }
+  };
+
+  try {
+    if (fs.existsSync(shotPath)) {
+      const stat = fs.statSync(shotPath);
+      const ageMs = Date.now() - stat.mtime.getTime();
+      if (ageMs < 60000) {
+        return returnImage();
+      }
+    }
+  } catch (e) {}
+
+  // Run observe-local.js dynamically if needed
+  execFile("node", ["observe-local.js"], { cwd: __dirname, timeout: 120000 }, (err) => {
+    returnImage();
+  });
+});
+
+// --- 시각 판정·롤백 연동 (/api/verify-render) ---
+app.post('/api/verify-render', async (req, res) => {
+  try {
+    const { target, screenshot } = req.body || {};
+    if (!target || !screenshot) return res.status(400).json({ ok: false, error: 'target and screenshot required' });
+    const activeKey = getActiveKey();
+    if (!activeKey) return res.status(500).json({ ok: false, error: 'API 키가 등록되어 있지 않습니다.' });
+
+    const ai = new GoogleGenAI({ apiKey: activeKey });
+    const prompt = `사용자가 웹 페이지 디자인을 변경했습니다. 제공된 스크린샷은 수정된 페이지의 렌더링 결과입니다.
+시각적 요소에 심각한 깨짐 현상(예: 텍스트가 컨테이너를 벗어나거나 잘림, 중요 요소가 겹침, 글자색과 배경색이 유사하여 가독성이 매우 떨어짐 등)이 있는지 확인하세요.
+정상이면 { "ok": true, "reason": "정상" } 을, 깨짐 현상이 있으면 { "ok": false, "reason": "문제가 있는 부분에 대한 짧은 설명" } 을 JSON으로만 응답하세요. 백틱(\`\`\`)은 쓰지 마세요.`;
+
+    const images = [{ mimeType: "image/png", data: screenshot }];
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: buildMultimodalContents(prompt, images),
+    });
+    
+    const reply = (response && response.text) ? response.text : '';
+    const jsonStr = extractJsonString(reply);
+    const parsed = JSON.parse(jsonStr);
+    
+    res.json({ ok: Boolean(parsed.ok), reason: parsed.reason || "알 수 없음" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // --- live 보호 v2: 디스크 스냅샷 자동 복원 (복원 후 재확인 포함) ---
 app.post('/api/rollback', async (req, res) => {
   try {

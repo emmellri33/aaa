@@ -1323,6 +1323,30 @@
             }
           }
 
+          // 3) 시각 판정 검증 (스크린샷 기반)
+          if (!rollbackReason) {
+            try {
+              const targetPage = targetPageSelect ? targetPageSelect.value : "index.html";
+              const shotRes = await fetch(`/api/observe-shot?target=${encodeURIComponent(targetPage)}`);
+              const shotData = await shotRes.json();
+              if (shotData.ok && shotData.image) {
+                const verifyRes = await fetch("/api/verify-render", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ target: targetPage, screenshot: shotData.image })
+                });
+                const verifyData = await verifyRes.json();
+                if (!verifyData.ok) {
+                  rollbackReason = `시각적 깨짐: ${verifyData.reason}`;
+                }
+              } else {
+                console.warn("스크린샷 획득 실패, 시각 검증 생략:", shotData.error);
+              }
+            } catch (e) {
+              console.warn("시각 검증 중 오류 발생:", e.message);
+            }
+          }
+
           // [자동 롤백 실행]
           if (rollbackReason) {
             try {
