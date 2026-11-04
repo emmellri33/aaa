@@ -594,7 +594,7 @@ app.post('/api/ai-modify', async (req, res) => {
         return res.status(422).json({ ok: false, error: "patch JSON에 edits 배열 또는 search/replace 필드가 누락되었습니다.", patch: finalParsed });
       }
 
-      for (let i = 0; i < rawEdits.length; i++) {
+       for (let i = 0; i < rawEdits.length; i++) {
         const ed = rawEdits[i];
         if (!ed || typeof ed.search !== "string" || !ed.search || typeof ed.replace !== "string") {
           return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + "의 search/replace 형식이 올바르지 않습니다.", patch: finalParsed });
@@ -603,6 +603,15 @@ app.post('/api/ai-modify', async (req, res) => {
         if (!wsCheck.ok) {
           return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + " 공백/속성 검증 실패: " + wsCheck.reason, patch: finalParsed });
         }
+      }
+      let totalRemoved = 0, totalAdded = 0;
+      for (const ed of rawEdits) {
+        totalRemoved += String(ed.search).split("\n").length;
+        totalAdded += String(ed.replace).split("\n").length;
+      }
+      if (totalRemoved - totalAdded >= 50) {
+        recordSecurityOrToolFailure("대규모 삭제 차단(422)", "순삭제 " + (totalRemoved - totalAdded) + "줄", "조각 분할 후 재요청");
+        return res.status(422).json({ ok: false, error: "거부됨(422): 대규모 삭제 감지(순삭제 " + (totalRemoved - totalAdded) + "줄). 삭제 범위를 조각으로 나누거나 유지할 부분을 명시해 다시 요청하세요.", patch: finalParsed });
       }
 
       finalParsed.edits = rawEdits;
