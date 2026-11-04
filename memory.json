@@ -13,7 +13,12 @@
   ],
   "rooms": {
     "room_1793781603173": [
-      "너는 '젬젬'이야"
+      "너는 '젬젬'이야",
+      "[뭘] (의도: 새 페이지 이동 버튼 추가) index.html에 '새 페이지 만들기' 버튼을 추가하고 클릭 시 blank.html로 이동하는 기능(기존 blank-btn 활용 또는 신규 생성)을 명시적으로 반영합니다 (총 1곳 수정) / [왜] (근거: index.html 115행 <button id=\"blank-btn\">edit</button> 코드 인용 [추측] 기존 'edit' 버튼이 이미 새 페이지로 이동하는 역할을 하므로 텍스트를 '새 페이지 만들기'로 변경하여 사용자 요구를 충족합니다)",
+      "[뭘] (의도: '멍청이 목록' 텍스트를 '할 일 목록'으로 변경) index.html 내의 h2 요소 내부 글자를 span별 색상 유지하며 '할 일 목록'으로 총 1곳 변경합니다 / [왜] (근거: 49행 `<h2><span style=\"color: #ff4d4f;\">멍</span><span style=\"color: #ffa940;\">청</span><span style=\"color: #ffec3d;\">이</span> <span style=\"color: #73d13d;\">목</span><span style=\"color: #40a9ff;\">록</span></h2>` 코드 인용)",
+      "[뭘] (의도: h1 태그의 내용을 'hello'로 변경) index.html의 h1#hello 태그 안의 텍스트와 span 구조를 'hello'로 변경합니다 (총 1곳) / [왜] (근거: index.html 101행의 `<h1 id=\"hello\"><span>안</span><span>녕</span><span>하</span><span>세</span><span>요</span></h1>` 코드를 인용하여 사용자의 요청대로 hello로 수정합니다 [추측])",
+      "[뭘] (의도: h1#hello의 'hello' 텍스트를 각 글자별 span 태그와 무지개 색상 규칙으로 분리 및 적용) index.html의 h1#hello 요소와 style 태그 내부에 span 색상 규칙을 총 7곳 추가합니다 / [왜] (근거: 6~13행 스타일 태그의 `#hello { ... }` 및 106행 `<h1 id=\"hello\">hello</h1>` 코드 인용) [추측] 사용자 지시인 'h1 글자 다시 각각 다른 색깔'을 만족하기 위해 이전 무지개 색상 구조를 복원합니다",
+      "[뭘] (의도: 다크모드/라이트모드 토글 버튼의 텍스트를 각각 영어로 변경) index.html 내 토글 버튼 텍스트 '🌙 다크 모드', '☀️ 라이트 모드', '🌙 다크 모드' 총 3곳을 영어('Dark Mode', 'Light Mode')로 변경합니다 / [왜] (근거: 92행 `<button id=\"theme-toggle\">🌙 다크 모드</button>`, 179행 `toggleBtn.textContent = '☀️ 라이트 모드';`, 182행 `toggleBtn.textContent = '🌙 다크 모드';` 코드 인용)"
     ]
   }
 }

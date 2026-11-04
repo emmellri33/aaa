@@ -150,7 +150,7 @@ function buildMultimodalContents(textPrompt, images) {
 // --- 채팅 (AI 답변 생성) ---
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, pageContext, model, images } = req.body || {};
+    const { message, pageContext, model, images, roomId } = req.body || {};
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : GEMINI_MODEL;
     const msg = (message || '').toString().trim();
@@ -164,38 +164,84 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const ai = new GoogleGenAI({ apiKey: activeKey });
-    const htmlRaw = pageContext || (fs.existsSync(INDEX_PATH) ? fs.readFileSync(INDEX_PATH, "utf8") : "");
-    const snippet = extractRelevantHtmlSnippet(htmlRaw, msg);
-    const facts = readMemoryFacts(req.body ? req.body.roomId : null);
+    const facts = readMemoryFacts(roomId);
     const memoryBlock = facts.length > 0 ? "[공유 기억 (memory.json)]\n- " + facts.join("\n- ") + "\n\n" : "";
 
-    const prompt = [
-      "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.",
-      "",
-      "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다.",
-      "[대화 및 증거 규칙]",
-      "1. 답변 맨 첫 줄에 반드시 사용자의 의도를 한 줄로 먼저 적고 시작하세요. 형식: [의도] ...",
-      "2. 막연한 지시는 합리적으로 추측해 먼저 제안하고 추측한 부분에는 반드시 [추측] 표시를 붙이세요. 도저히 알 수 없을 때만 질문하세요.",
-      "3. 단정적인 설명은 반드시 아래 제공된 코드 발췌본의 실제 줄 번호나 선택자를 인용(근거 제시)하며 작성하세요. 근거 없는 \"됩니다\"나 확인 전 \"완료·검증완료\" 문구는 절대 금지합니다.",
-      "4. [판단 루브릭] '뭐가 나을지' 분석·판단 요청을 받으면 반드시 이 순서로 따져 답하세요: 목표 부합 → 가역성(실패 시 되돌리기) → 폭발 반경(잘못됐을 때 피해) → 비용(구현·유지·검증) → 검증 가능성(통과/실패 테스트). 항목을 건너뛰지 마세요.",
-      "5. [증거 규칙] 작업 완료·'됐다'는 보고에는 증거 3종(앵커 grep 실물·실행 결과·수용 테스트)을 반드시 붙이세요. 셋 중 하나라도 없으면 '됐다' 대신 부족한 증거를 명시하고, 기억 인용(본 적 없는 파일·줄 번호)은 절대 금지합니다.",
-      "",
-      memoryBlock + "[index.html 관련 발췌 코드]\n" + snippet,
-      "",
-      "사용자 메시지: " + msg
-    ].join("\n");
+    const seenSignatures = new Set();
+    const toolHistoryBlocks = [];
+    const observedSummaries = [];
+    const MAX_CHAT_ROUNDS = 5;
 
-    console.log("CHAT start", new Date().toISOString(), "keylen=" + String(activeKey).length, "model="+ useModel);
-    const response = await ai.models.generateContent({
-      model: useModel,
-      contents: buildMultimodalContents(prompt, images),
-    });
-    const reply = (response && response.text) ? response.text : '(응답 없음)';
-    if (!String(reply).trimStart().startsWith("[의도]")) {
-      recordSecurityOrToolFailure("의도첫줄 누락(채팅)", String(msg).slice(0, 60), "프롬프트 규칙 1항 위반");
-      return res.status(422).json({ ok: false, error: "거부됨(422): 답변 첫 줄 [의도] 누락. 규칙 1항을 지켜 다시 작성하세요.", reply });
+    let finalReply = "";
+
+    for (let round = 1; round <= MAX_CHAT_ROUNDS; round++) {
+      const historySection = toolHistoryBlocks.length > 0 ? ("\n\n" + toolHistoryBlocks.join("\n\n")) : "";
+      const prompt = [
+        "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.",
+        "",
+        "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다. 추가 확인이 필요하면 grep 또는 read 도구를 호출하세요.",
+        "쓰기 도구(run 포함)는 허용되지 않습니다. 오직 grep과 read만 허용됩니다.",
+        "마지막에는 [의도] ... 형식으로 시작하는 최종 답변을 출력하세요.",
+        "",
+        memoryBlock + historySection,
+        "",
+        "사용자 메시지: " + msg
+      ].join("\n");
+
+      let rawText = "";
+      try {
+        const response = await ai.models.generateContent({
+          model: useModel,
+          contents: buildMultimodalContents(prompt, round === 1 ? images : []),
+        });
+        rawText = (response && response.text) ? response.text : "";
+      } catch (e) {
+        rawText = "채팅 오류 발생: " + e.message;
+      }
+
+      const jsonStr = extractJsonString(rawText);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (err) {}
+
+      if (parsed && parsed.type === "tool_calls" && Array.isArray(parsed.calls) && parsed.calls.length > 0) {
+        const roundOutputs = [];
+        for (let cIdx = 0; cIdx < parsed.calls.length; cIdx++) {
+          const callObj = parsed.calls[cIdx];
+          const toolName = String((callObj && callObj.tool) || "").trim();
+          
+          if (toolName !== "grep" && toolName !== "read") {
+            roundOutputs.push("[차단] 채팅에서는 grep, read 도구만 허용됩니다.");
+            continue;
+          }
+
+          const tRes = await executeReactToolCall(callObj, seenSignatures);
+          if (!tRes.ok && tRes.status === 422) {
+            roundOutputs.push("[도구 거부 422]: " + tRes.error);
+            continue;
+          }
+          const summaryLabel = toolName + "(" + JSON.stringify((callObj && callObj.args) || {}) + ")";
+          observedSummaries.push(summaryLabel);
+          roundOutputs.push("▶ " + summaryLabel + "\n" + String(tRes.output || tRes.error || "(출력 없음)"));
+        }
+        toolHistoryBlocks.push("[도구 결과 " + round + "회차]\n" + roundOutputs.join("\n---\n"));
+        continue;
+      }
+
+      finalReply = rawText;
+      break;
     }
-    return res.json({ reply });
+
+    if (!finalReply) {
+      finalReply = "[의도] 요청 처리 완료\n도구 탐색을 마쳤으나 최종 응답이 생성되지 않았습니다.";
+    }
+
+    if (!String(finalReply).trimStart().startsWith("[의도]")) {
+      finalReply = "[의도] 사용자 질문 답변\n" + finalReply;
+    }
+
+    res.json({ reply: finalReply });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';

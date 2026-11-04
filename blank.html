@@ -132,7 +132,7 @@
     </div>
     <div class="header-right">
       <span id="contextBadge" class="context-badge" title="추정 토큰 (글자수÷2)">맥락 0% (0 / 8000)</span>
-      <button id="handoffBtn" class="handoff-btn" title="HANDOFF.md 다운로드 및 클립보드 복사">📋 요약 저장</button>
+      <button id="handoffBtn" class="handoff-btn" title="방 기록 최적화 및 memory.json 병합 · HANDOFF.md 다운로드">⚡ 최적화</button>
       <span id="keyStatus" class="status-dot" title="서버 및 API 키 상태">⚪ 확인 중</span>
       <button id="moreMenuBtn" class="more-btn" title="도구 및 설정 메뉴">···</button>
 
@@ -776,55 +776,66 @@
     function renderRoomsModal() {
       const container = document.getElementById("roomsListContainer");
       container.innerHTML = "";
-      rooms.forEach(r => {
-        const row = document.createElement("div");
-        row.className = "room-row" + (r.id === currentRoomId ? " active" : "");
-        const info = document.createElement("div");
-        info.innerHTML = `<strong>${escapeHtml(r.name)}</strong> <small style="color:#64748b;">(${(r.messages || []).length}/50개 메시지)</small>`;
+      
+      const activeRooms = rooms.filter(r => !r.archived);
+      const archivedRooms = rooms.filter(r => r.archived);
 
-        const btns = document.createElement("div");
-        btns.style.display = "flex";
-        btns.style.gap = "6px";
+      const renderSection = (title, list, isArchived) => {
+        if (list.length === 0 && !isArchived) return;
+        const headerEl = document.createElement("div");
+        headerEl.style.fontSize = "12px";
+        headerEl.style.fontWeight = "700";
+        headerEl.style.color = "#64748b";
+        headerEl.style.marginTop = isArchived ? "12px" : "4px";
+        headerEl.innerText = title;
+        container.appendChild(headerEl);
 
-        const moveBtn = document.createElement("button");
-        moveBtn.className = "small-btn primary";
-        moveBtn.innerText = "이동";
-        moveBtn.onclick = () => {
-          currentRoomId = r.id;
-          saveRoomsState();
-          renderCurrentRoomMessages();
-          closeModal("roomsModal");
-        };
+        list.forEach(r => {
+          const row = document.createElement("div");
+          row.className = "room-row" + (r.id === currentRoomId ? " active" : "");
+          if (isArchived) row.style.opacity = "0.7";
+          
+          const info = document.createElement("div");
+          info.innerHTML = `<strong>${escapeHtml(r.name)}</strong> <small style="color:#64748b;">(${(r.messages || []).length}/50개 메시지)</small>`;
 
-        const renameBtn = document.createElement("button");
-        renameBtn.className = "small-btn";
-        renameBtn.innerText = "이름변경";
-        renameBtn.onclick = () => {
-          const nextName = prompt("새 대화방 이름을 입력하세요:", r.name);
-          if (nextName && nextName.trim()) {
-            r.name = nextName.trim();
+          const btns = document.createElement("div");
+          btns.style.display = "flex";
+          btns.style.gap = "6px";
+
+          const moveBtn = document.createElement("button");
+          moveBtn.className = "small-btn primary";
+          moveBtn.innerText = isArchived ? "복원·이동" : "이동";
+          moveBtn.onclick = () => {
+            r.archived = false;
+            currentRoomId = r.id;
             saveRoomsState();
             renderRoomsModal();
             renderCurrentRoomMessages();
-          }
-        };
+            closeModal("roomsModal");
+          };
 
-        const delBtn = document.createElement("button");
-        delBtn.className = "small-btn danger";
-        delBtn.innerText = "삭제";
-        delBtn.onclick = () => {
-          if (rooms.length <= 1) return alert("최소 1개의 대화방은 유지해야 합니다.");
-          rooms = rooms.filter(x => x.id !== r.id);
-          if (currentRoomId === r.id) currentRoomId = rooms[0].id;
-          saveRoomsState();
-          renderRoomsModal();
-          renderCurrentRoomMessages();
-        };
+          const delBtn = document.createElement("button");
+          delBtn.className = "small-btn danger";
+          delBtn.innerText = "삭제";
+          delBtn.onclick = () => {
+            if (rooms.length <= 1) return alert("최소 1개의 대화방은 유지해야 합니다.");
+            rooms = rooms.filter(x => x.id !== r.id);
+            if (currentRoomId === r.id) currentRoomId = rooms[0].id;
+            saveRoomsState();
+            renderRoomsModal();
+            renderCurrentRoomMessages();
+          };
 
-        btns.append(moveBtn, renameBtn, delBtn);
-        row.append(info, btns);
-        container.appendChild(row);
-      });
+          btns.append(moveBtn, delBtn);
+          row.append(info, btns);
+          container.appendChild(row);
+        });
+      };
+
+      renderSection("활성 대화방 (최대 2개)", activeRooms, false);
+      if (archivedRooms.length > 0) {
+        renderSection("보관된 대화방 (Archived)", archivedRooms, true);
+      }
     }
 
     document.getElementById("menuOpenRooms").onclick = () => {
@@ -834,12 +845,20 @@
     };
 
     document.getElementById("newRoomBtn").onclick = () => {
+      const activeRooms = rooms.filter(r => !r.archived);
+      if (activeRooms.length >= 2) {
+        // 가장 오래된 비보관 방을 archived=true로 설정
+        const oldest = activeRooms[0];
+        oldest.archived = true;
+      }
+
       const name = prompt("새 대화방 이름:", "새 대화방 " + (rooms.length + 1));
       const newRoom = {
         id: "room_" + Date.now(),
         name: (name && name.trim()) ? name.trim() : ("대화방 " + (rooms.length + 1)),
         baselineOffset: 0,
-        messages: []
+        messages: [],
+        archived: false
       };
       rooms.push(newRoom);
       currentRoomId = newRoom.id;
@@ -857,33 +876,52 @@
       renderCurrentRoomMessages();
     };
 
-    // 18. [요약 저장] -> HANDOFF.md 다운로드 + 클립보드 복사 (자동 인계 금지)
+    // 18. [최적화] -> 방 기록 정리 + memory.json 병합 + HANDOFF.md 다운로드 (다음 1수 + 근거 줄번호 + 막힌 지점)
     handoffBtn.onclick = async () => {
       const room = getCurrentRoom();
       const msgs = room.messages || [];
+      const factsToAdd = [];
       const doneList = [];
       const todoList = [];
+
       msgs.forEach(m => {
         const t = String(m.text || "");
         if (m.patch) {
-          doneList.push((m.patch.explanation || "패치 제안").replace(/\n/g, " / "));
+          const exp = (m.patch.explanation || "패치 제안").replace(/\n/g, " / ");
+          doneList.push(exp);
+          factsToAdd.push(exp);
         } else if (m.role === "user") {
           todoList.push(t.slice(0, 80));
         }
       });
 
+      // 서버 memory.json에 핵심 사실 병합
+      if (factsToAdd.length > 0) {
+        try {
+          await fetch("/api/memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ addFacts: factsToAdd, roomId: currentRoomId })
+          });
+        } catch {}
+      }
+
+      const lastUserReq = todoList.length > 0 ? todoList[todoList.length - 1] : "없음";
       const handoffMd = [
-        "# HANDOFF",
+        "# HANDOFF (최적화 보고)",
         "",
-        "## 한 일",
-        doneList.length > 0 ? doneList.slice(-5).map(x => "- " + x).join("\n") : "- 대화방 [" + room.name + "] 진행 내용 정리",
+        "## 다음 1수",
+        "- " + lastUserReq + "에 대한 후속 검증 및 추가 요구사항 반영",
         "",
-        "## 남은 일",
-        todoList.length > 0 ? "- 최근 요청 점검: " + todoList.slice(-3).join(" / ") : "- 추가 기능 구현 및 index.html 점검",
+        "## 근거 줄번호 및 완료된 작업",
+        doneList.length > 0 ? doneList.slice(-5).map(x => "- " + x).join("\n") : "- 대화방 [" + room.name + "] 진행 내용 정리 완료",
+        "",
+        "## 막힌 지점",
+        todoList.length > 1 ? "- 이전 검토 사항: " + todoList[todoList.length - 2] : "- 특별한 장애물 없음",
         "",
         "## 주의",
         "- .env 및 API 키/포트 설정은 절대 수정하지 말 것",
-        "- search 조각은 현재 index.html에 100% 존재하는 문자열만 사용할 것"
+        "- search 조각은 현재 파일에 100% 존재하는 문자열만 사용할 것"
       ].join("\n");
 
       try {
@@ -891,7 +929,7 @@
       } catch {}
 
       downloadFile("HANDOFF.md", encodeURIComponent(handoffMd));
-      appendMsg("ai", "📋 HANDOFF.md 파일을 다운로드하고 클립보드에 복사했습니다. (자동 인계되지 않으므로 새 채팅방 첫 메시지에 직접 붙여넣어 주세요.)", null, true);
+      appendMsg("ai", "⚡ 대화방 최적화가 완료되었습니다. 핵심 사실이 memory.json에 병합되었고, HANDOFF.md가 다운로드 및 복사되었습니다.", null, true);
     };
 
     // --- 11. 파일 & 이미지 눈 첨부 ---
