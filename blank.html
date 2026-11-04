@@ -214,12 +214,15 @@
       </div>
       <div class="split-card" id="previewCard">
         <div class="split-header">
-          <span>🖥️ index.html 실시간 미리보기</span>
+          <span style="display:flex; align-items:center; gap:6px;">
+            <span>🖥️ index.html 실시간 미리보기</span>
+            <span id="stagingBadge" style="display:none; background:#f59e0b; color:#fff; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:700;">스테이징</span>
+          </span>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <button class="small-btn" id="vpPhoneBtn" title="폰 뷰포트 390px">📱 390</button>
             <button class="small-btn" id="vpDeskBtn" title="데스크톱 1920px">🖥 1920</button>
             <button class="small-btn" id="vpResetBtn" title="뷰포트 리셋">↩ 리셋</button>
-            <button class="small-btn" onclick="document.getElementById('indexPreview').src='index.html?t='+Date.now()">🔄 새로고침</button>
+            <button class="small-btn" onclick="loadIndexCode()">🔄 새로고침</button>
           </span>
         </div>
         <div id="eyeReport" style="font-size:11.5px; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:4px 8px; margin-bottom:6px;">👁️ 눈: 대기 중 (패치 적용 후 자동 보고)</div>
@@ -532,13 +535,27 @@
     });
 
     // --- index.html 코드 & 미리보기 로드 ---
+    let isStagingPreview = false;
+    function setStagingMode(active, htmlContent) {
+      const frame = document.getElementById("indexPreview");
+      const badge = document.getElementById("stagingBadge");
+      isStagingPreview = Boolean(active);
+      if (badge) badge.style.display = isStagingPreview ? "inline-block" : "none";
+      if (!frame) return;
+      if (isStagingPreview && typeof htmlContent === "string") {
+        frame.srcdoc = htmlContent;
+      } else {
+        try { frame.removeAttribute("srcdoc"); } catch {}
+        frame.src = "index.html?t=" + Date.now();
+      }
+    }
+
     async function loadIndexCode() {
       try {
         const r = await fetch("/api/page/index");
         const d = await r.json();
         contextText.value = d.content || "";
-        const frame = document.getElementById("indexPreview");
-        if (frame) frame.src = "index.html?t=" + Date.now();
+        setStagingMode(false);
       } catch {}
     }
     loadIndexCode();
@@ -567,12 +584,17 @@
         return label + " 읽기 실패(" + String((e && e.message) || e).slice(0, 80) + ")";
       }
     }
-    async function runEyeReport(reason) {
+    async function runEyeReport(reason, opts = { reload: true }) {
       const frame = document.getElementById("indexPreview");
       const report = document.getElementById("eyeReport");
       if (!frame || !report) return "(눈 UI 없음)";
-      // iframe 리로드 후 렌더 대기 (최대 3초 폴링)
-      try { frame.src = "index.html?t=" + Date.now(); } catch {}
+      const shouldReload = !opts || opts.reload !== false;
+      // reload:true 일 때만 서버본 리로드 (스테이징 해제 포함), reload:false 면 현재 iframe(srcdoc) 그대로 보고
+      if (shouldReload) {
+        try {
+          setStagingMode(false);
+        } catch {}
+      }
       let win = null;
       for (let i = 0; i < 30; i++) {
         try {
@@ -1070,12 +1092,14 @@
         ${piecesHtml}
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <button class="apply-patch-btn" style="background:#2563eb; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600;">✅ 전 조각 일괄 적용</button>
+          <button class="discard-stage-btn" style="display:none; background:#dc2626; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600;">🗑️ 폐기</button>
           <button class="undo-patch-btn" disabled style="background:#64748b; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:not-allowed; font-size:12px; font-weight:600; opacity:0.5;">↩️ 되돌리기</button>
           <span class="patch-status" style="font-size:12px; color:#475569;">승인 대기 중 (자동 적용 금지)</span>
         </div>
       `;
 
       const applyBtn = bubble.querySelector(".apply-patch-btn");
+      const discardBtn = bubble.querySelector(".discard-stage-btn");
       const undoBtn = bubble.querySelector(".undo-patch-btn");
       const statusSpan = bubble.querySelector(".patch-status");
       let backupContent = null;
@@ -1084,7 +1108,18 @@
         armedForConfirm = false;
         applyBtn.innerText = "✅ 전 조각 일괄 적용";
         applyBtn.style.background = "#2563eb";
+        if (discardBtn) discardBtn.style.display = "none";
       };
+
+      if (discardBtn) {
+        discardBtn.onclick = async () => {
+          disarmConfirm();
+          await loadIndexCode();
+          statusSpan.style.color = "#475569";
+          statusSpan.innerText = "🗑️ 스테이징 폐기됨 — live(index.html 서버본) 복원 완료 (파일 쓰기 없음)";
+          try { await runEyeReport("스테이징 폐기·live 복원", { reload: true }); } catch {}
+        };
+      }
 
       applyBtn.onclick = async () => {
         await loadIndexCode();
@@ -1139,15 +1174,19 @@
           return;
         }
 
-        // live 보호 2: 2단계 확정 — 첫 클릭은 검증까지, 두 번째 클릭이 실제 쓰기
+        // live 보호 2: 2단계 확정 — 첫 클릭은 검증 + 스테이징(srcdoc) 렌더 및 눈 보고, 두 번째 클릭이 실제 쓰기
         if (!armedForConfirm) {
           armedForConfirm = true;
           applyBtn.innerText = "⚠️ 확정 적용 (다시 클릭)";
           applyBtn.style.background = "#ea580c";
+          if (discardBtn) discardBtn.style.display = "inline-block";
+          setStagingMode(true, working);
           statusSpan.style.color = "#2563eb";
-          statusSpan.innerText = `✅ 검증 통과(${edits.length}조각, 스냅샷済) — 확정하려면 한 번 더 누르세요`;
+          statusSpan.innerText = `✅ 검증 통과(${edits.length}조각, 스냅샷済 · 스테이징 렌더됨) — 확정하려면 한 번 더 누르세요`;
+          try { await runEyeReport("스테이징", { reload: false }); } catch (e) { statusSpan.innerText += " (스테이징 눈 실패)"; }
           return;
         }
+        if (discardBtn) discardBtn.style.display = "none";
 
         backupContent = current;
         const r = await fetch("/api/page/index", {
