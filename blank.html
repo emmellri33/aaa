@@ -599,7 +599,9 @@
         frame.src = "index.html?t=" + Date.now();
       }
     }
-
+    
+  // C12 직접수정: 카드 target에 맞는 저장 URL (기본 index.html)
+    function __patchSaveUrl(p) { const t = (p && p.target) ? p.target : "index.html"; return "/api/page/" + encodeURIComponent(t === "index.html" ? "index" : t); }
     async function loadIndexCode() {
       try {
         const target = targetPageSelect ? targetPageSelect.value : "index.html";
@@ -1255,7 +1257,19 @@
       }
 
       applyBtn.onclick = async () => {
-        await loadIndexCode();
+             {
+          const _lt = (typeof patch !== "undefined" && patch && patch.target) ? patch.target : null;
+          const _lf = (!_lt || _lt === "index") ? null : _lt;
+          if (_lf && _lf !== "index.html") {
+            try {
+              const _lr = await fetch("/api/files/read?name=" + encodeURIComponent(_lf));
+              const _ld = await _lr.json();
+              if (_ld && _ld.ok && typeof _ld.content === "string") { contextText.value = _ld.content; setStagingMode(false); }
+            } catch (e) {}
+          } else {
+            await loadIndexCode();
+          }
+        }
         const current = contextText.value;
 
         // live 보호 1: 적용 전 자동 스냅샷 (git add→commit→push, 실패해도 인메모리 백업으로 계속)
@@ -1323,9 +1337,10 @@
 
         backupContent = current;
         // live 보호 v2: 패치 카드 확인 선택자(없으면 기본 #hello)로 렌더 검증 후 자동 롤백
-        const confirmSelector = (patch && patch.confirmSelector) ? patch.confirmSelector : "#hello";
+   const _ptF = (typeof patch !== "undefined" && patch && patch.target) ? patch.target : "index.html";
+        const confirmSelector = (patch && patch.confirmSelector) ? patch.confirmSelector : (_ptF === "cockpit.html" ? ".header-title" : "#hello");
 
-        const r = await fetch("/api/page/index", {
+        const r = await fetch(__patchSaveUrl(typeof patch !== "undefined" ? patch : null), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: working })
@@ -1344,10 +1359,19 @@
             rollbackReason = "Health 서버 통신 불가";
           }
 
-          // 2) 렌더(iframe) 검증: 확인 선택자 존재 여부
+             // 2) 렌더(iframe) 검증: 확인 선택자 존재 여부 (target 페이지로 전환 후 검증)
           if (!rollbackReason) {
             try {
               const frame = document.getElementById("indexPreview");
+              const _wantSrc = (typeof _ptF !== "undefined" && _ptF === "cockpit.html") ? "cockpit.html" : "index.html";
+              if (frame && (frame.getAttribute("src") || "").split("?")[0] !== _wantSrc) {
+                await new Promise((resolve) => {
+                  let _done = false;
+                  const _to = setTimeout(() => { if (!_done) { _done = true; resolve(); } }, 8000);
+                  frame.onload = () => { if (!_done) { _done = true; clearTimeout(_to); resolve(); } };
+                  frame.src = _wantSrc + "?t=" + Date.now();
+                });
+              }
               const win = frame ? frame.contentWindow : null;
               const doc = win ? win.document : null;
               if (!doc) {
@@ -1365,8 +1389,8 @@
           // 3) 시각 판정 검증 (스크린샷 기반)
           if (!rollbackReason) {
             try {
-              const targetPage = targetPageSelect ? targetPageSelect.value : "index.html";
-              const shotRes = await fetch(`/api/observe-shot?target=${encodeURIComponent(targetPage)}`);
+              const _tp = (typeof _ptF !== "undefined" && _ptF && _ptF !== "index") ? _ptF : null;
+              const targetPage = _tp ? _tp : (targetPageSelect ? targetPageSelect.value : "index.html");              const shotRes = await fetch(`/api/observe-shot?target=${encodeURIComponent(targetPage)}`);
               const shotData = await shotRes.json();
               if (shotData.ok && shotData.image) {
                 const verifyRes = await fetch("/api/verify-render", {
@@ -1433,7 +1457,7 @@
 
       undoBtn.onclick = async () => {
         if (backupContent === null) return;
-        const r = await fetch("/api/page/index", {
+        const r = await fetch(__patchSaveUrl(typeof patch !== "undefined" ? patch : null), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: backupContent })
