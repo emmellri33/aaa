@@ -13,6 +13,7 @@ const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
 const FAILURES_PATH = path.join(__dirname, 'failures.md');
 const FAILURES_COLD_PATH = path.join(__dirname, 'failures-cold.md');
+const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
 const { execFile } = require('child_process');
 
 app.use(express.json({ limit: '20mb' }));
@@ -90,7 +91,7 @@ function searchRelevantFailures(queryText) {
 
 function extractRelevantHtmlSnippet(html, queryText) {
   const full = String(html || "");
-  if (!full) return "(index.html 비어 있음)";
+  if (!full) return "(코드 비어 있음)";
   const lines = full.split("\n");
   const words = String(queryText || "").toLowerCase().split(/\s+/).filter(w => w.length >= 2);
   const hitIndices = new Set();
@@ -107,6 +108,30 @@ function extractRelevantHtmlSnippet(html, queryText) {
   }
   const sorted = Array.from(hitIndices).sort((a, b) => a - b).slice(0, 45);
   return sorted.map(i => (i + 1) + ": " + lines[i]).join("\n");
+}
+
+function getCreator(filename) {
+  try {
+    if (!fs.existsSync(MANIFEST_PATH)) {
+      fs.writeFileSync(MANIFEST_PATH, JSON.stringify({ "index.html": "system" }, null, 2), "utf8");
+    }
+    const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+    if (filename === "index.html") return "system";
+    return manifest[filename] || "user";
+  } catch (e) {
+    return filename === "index.html" ? "system" : "user";
+  }
+}
+
+function setCreator(filename, who) {
+  try {
+    let manifest = {};
+    if (fs.existsSync(MANIFEST_PATH)) {
+      manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+    }
+    manifest[filename] = who;
+    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf8");
+  } catch (e) {}
 }
 
 function buildMultimodalContents(textPrompt, images) {
@@ -208,22 +233,39 @@ function loadSnapshotFromDisk() {
     return null;
   }
 }
-app.post('/api/page/index', (req, res, next) => {
+app.post('/api/page/:target', (req, res, next) => {
   try {
-    if (req.body && typeof req.body.content === 'string' && fs.existsSync(INDEX_PATH)) {
-      saveSnapshotToDisk(fs.readFileSync(INDEX_PATH, 'utf8'));
+    let target = req.params.target;
+    if (target === "index") target = "index.html";
+    const p = path.join(__dirname, target);
+    if (req.body && typeof req.body.content === 'string' && fs.existsSync(p)) {
+      saveSnapshotToDisk(fs.readFileSync(p, 'utf8'));
     }
   } catch (e) {}
   next();
 });
 
-app.post('/api/page/index', (req, res) => {
+app.post('/api/page/:target', (req, res) => {
+  let target = req.params.target;
+  if (target === "index") target = "index.html";
+  const p = path.join(__dirname, target);
+
+  if (target !== "index.html" && getCreator(target) === "user") {
+    return res.status(403).json({ error: 'forbidden: 사용자 소유 파일은 덮어쓸 수 없습니다.' });
+  }
+  
   const { content } = req.body || {};
   if (typeof content !== 'string') return res.status(400).json({ error: 'content required' });
-  if (!content.includes('<html') || !content.includes('</html>')) {
+  if (target.endsWith('.html') && (!content.includes('<html') || !content.includes('</html>'))) {
     return res.status(400).json({ error: 'invalid html: <html>...</html> 구조가 필요합니다.' });
   }
-  fs.writeFile(INDEX_PATH, content, 'utf8', (err) => {
+
+  // 신규 파일이면 manifest에 등록
+  if (!fs.existsSync(p)) {
+    setCreator(target, "gemgem");
+  }
+
+  fs.writeFile(p, content, 'utf8', (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ ok: true });
   });
@@ -570,9 +612,25 @@ app.post('/api/ai-modify', async (req, res) => {
     }
     if (!instruction || !target) return res.status(400).json({ error: 'instruction and target required' });
 
+    let targetFile = target;
+    if (targetFile === "index") targetFile = "index.html";
+
+    if (targetFile !== "index.html" && getCreator(targetFile) === "user") {
+      recordSecurityOrToolFailure("user 소유 파일 AI 패치 시도", targetFile, "403 거부");
+      return res.status(403).json({ error: "거부됨(403): 사용자 소유 파일은 AI 패치가 허용되지 않습니다." });
+    }
+    if (targetFile === "blank.html" || targetFile === "cockpit.html" || targetFile === "server.js") {
+      return res.status(403).json({ error: "거부됨(403): 시스템 핵심 파일은 패치 대상이 아닙니다." });
+    }
+
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : "gemini-3.5-flash-lite";
-    const htmlSource = currentContent || fs.readFileSync(INDEX_PATH, "utf8");
+    
+    let htmlSource = currentContent;
+    if (!htmlSource) {
+      const p = path.join(__dirname, targetFile);
+      htmlSource = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+    }
     const activeKey = getActiveKey();
 
     if (!activeKey && (!Array.isArray(mockResponses) || mockResponses.length === 0)) {
@@ -611,8 +669,8 @@ app.post('/api/ai-modify', async (req, res) => {
 
       // 1회차에만 전체 코드 전달, 2회차부터는 토큰 절약을 위해 생략 문구로 대체
       const codeSection = (round === 1)
-        ? ("\n\n[현재 index.html 전체 코드]\n" + htmlSource)
-        : "\n\n[현재 index.html 전체 코드]\n(1회차에 이미 전달된 전체 코드는 생략 — 위 1회차 코드 및 아래 도구 결과를 참고하고, 이미 받은 내용은 재조회하지 마세요)";
+        ? (`\n\n[현재 ${targetFile} 전체 코드]\n` + htmlSource)
+        : `\n\n[현재 ${targetFile} 전체 코드]\n(1회차에 이미 전달된 전체 코드는 생략 — 위 1회차 코드 및 아래 도구 결과를 참고하고, 이미 받은 내용은 재조회하지 마세요)`;
 
       const historySection = toolHistoryBlocks.length > 0
         ? ("\n\n" + toolHistoryBlocks.join("\n\n"))
@@ -711,7 +769,10 @@ app.post('/api/ai-modify', async (req, res) => {
     }
 
     if (finalParsed.type === "patch") {
-      finalParsed.target = "index.html";
+      if (!finalParsed.target) {
+        finalParsed.target = targetFile;
+      }
+      
       let rawEdits = [];
       if (Array.isArray(finalParsed.edits) && finalParsed.edits.length > 0) {
         rawEdits = finalParsed.edits;
