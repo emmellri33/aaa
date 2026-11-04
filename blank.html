@@ -943,6 +943,26 @@
       } catch {}
     }
 
+    // --- 재시도: /api/ai-modify 전송 실패(네트워크 오류·5xx) 시 1회만 자동 재시도 (중지·400·422는 재시도 안 함) ---
+    async function fetchAiModifyWithRetry(payload, signal) {
+      const body = JSON.stringify(payload);
+      const attempt = () => fetch("/api/ai-modify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body
+      });
+      try {
+        const first = await attempt();
+        if (first.status !== 500 && first.status !== 502 && first.status !== 503 && first.status !== 504) return first;
+      } catch (e) {
+        if (e && e.name === "AbortError") throw e;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+      console.info("🔄 /api/ai-modify 자동 재시도(1회)");
+      return attempt();
+    }
+
     async function requestSelfHealRetry(originalInstruction, errorReason, attempt) {
       if (attempt > 3) {
         appendMsg("ai", `❓ [자가수복 3회 실패 — 확인 질문]\n패치 적용/검증 중 다음 오류가 계속 발생했습니다:\n(${errorReason})\n어떤 부분을 우선 수정할지 구체적으로 지정해 주시겠어요?`);
@@ -951,16 +971,12 @@
       appendMsg("ai", `🔄 자가수복 재요청 중... (${attempt}/3회) — 사유: ${errorReason}`, null, true);
       try {
         await loadIndexCode();
-        const res = await fetch("/api/ai-modify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            target: "index",
-            instruction: originalInstruction,
-            currentContent: contextText.value,
-            model: modelSelect.value,
-            retryError: errorReason
-          })
+        const res = await fetchAiModifyWithRetry({
+          target: "index",
+          instruction: originalInstruction,
+          currentContent: contextText.value,
+          model: modelSelect.value,
+          retryError: errorReason
         });
         const d = await res.json();
         if (d.ok && d.patch && d.patch.type === "patch") {
@@ -1286,18 +1302,13 @@
 
       try {
         if (actionMode.value === "modify-index") {
-          const res = await fetch("/api/ai-modify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: currentAbortController.signal,
-            body: JSON.stringify({
-              target: "index",
-              instruction: promptPayload,
-              currentContent: contextText.value,
-              model: modelSelect.value,
-              images: imageFiles
-            })
-          });
+          const res = await fetchAiModifyWithRetry({
+            target: "index",
+            instruction: promptPayload,
+            currentContent: contextText.value,
+            model: modelSelect.value,
+            images: imageFiles
+          }, currentAbortController.signal);
           const d = await res.json();
           loadingMsg.remove();
           if (!d.ok || !d.patch) {
