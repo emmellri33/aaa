@@ -633,8 +633,15 @@ app.post('/api/ai-modify', async (req, res) => {
       return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + finalParsed.type, patch: finalParsed });
     }
 
-    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed });
-  } catch (e) {
+    const banWords = ["검증완료", "됩니다", "완료"];
+    const scanText = String(finalParsed.explanation || "") + "\n" + String(finalParsed.question || "");
+    const hitBan = banWords.find(w => scanText.includes(w));
+    if (hitBan) {
+      recordSecurityOrToolFailure("완료표현 차단(422)", "발견: " + hitBan, "증거 기준 재작성");
+      return res.status(422).json({ ok: false, error: "거부됨(422): 근거 없는 완료 표현 금지(발견: \"" + hitBan + "\"). 증거(앵커·실행 결과) 기준으로 다시 작성하세요.", patch: finalParsed });
+    }
+
+    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed });  } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';
     if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
