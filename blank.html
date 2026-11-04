@@ -543,6 +543,7 @@
       if (badge) badge.style.display = isStagingPreview ? "inline-block" : "none";
       if (!frame) return;
       if (isStagingPreview && typeof htmlContent === "string") {
+        try { frame._stageOldDoc = frame.contentWindow.document; } catch { frame._stageOldDoc = null; }
         frame.srcdoc = htmlContent;
       } else {
         try { frame.removeAttribute("srcdoc"); } catch {}
@@ -593,6 +594,20 @@
       if (shouldReload) {
         try {
           setStagingMode(false);
+        } catch {}
+      } else {
+        // 스테이징: srcdoc 커밋(document 교체) 대기 — 옛 document를 읽는 레이스 방지
+        try {
+          const oldDoc = frame._stageOldDoc || null;
+          frame._stageOldDoc = null;
+          if (oldDoc) {
+            for (let i = 0; i < 30; i++) {
+              let cur = null;
+              try { cur = frame.contentWindow.document; } catch {}
+              if (cur && cur !== oldDoc) break;
+              await new Promise(r => setTimeout(r, 100));
+            }
+          }
         } catch {}
       }
       let win = null;
