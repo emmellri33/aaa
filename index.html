@@ -5,10 +5,15 @@
   <title>Hello</title>
   <style>
     #hello {
-      color: blue;
       font-size: 64px;
       font-weight: bold;
     }
+    #hello span:nth-child(1) { color: #ff4d4f; }
+    #hello span:nth-child(2) { color: #ffa940; }
+    #hello span:nth-child(3) { color: #ffec3d; }
+    #hello span:nth-child(4) { color: #73d13d; }
+    #hello span:nth-child(5) { color: #40a9ff; }
+    #hello span:nth-child(6) { color: #9254de; }
     #counter {
       font-size: 24px;
       margin: 16px 0;
@@ -103,7 +108,7 @@
 <body>
   <button id="theme-toggle">🌙 다크 모드</button>
   <button id="blank-btn">빈 페이지로 이동</button>
-  <h1 id="hello">안녕하세요</h1>
+  <h1 id="hello"><span>안</span><span>녕</span><span>하</span><span>세</span><span>요</span></h1>
   <div id="counter">0</div>
   <button id="btn">+1</button>
 
