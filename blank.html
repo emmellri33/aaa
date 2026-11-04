@@ -602,6 +602,7 @@
     
   // C12 직접수정: 카드 target에 맞는 저장 URL (기본 index.html)
     function __patchSaveUrl(p) { const t = (p && p.target) ? p.target : "index.html"; return "/api/page/" + encodeURIComponent(t === "index.html" ? "index" : t); }
+        function __explicitTarget(text) { const m = String(text || "").match(/target\s*=\s*([\w\-.]+\.html?)/i); if (!m) return null; let f = m[1]; if (!/\.html$/i.test(f)) f += ".html"; return f; }
     async function loadIndexCode() {
       try {
         const target = targetPageSelect ? targetPageSelect.value : "index.html";
@@ -1129,7 +1130,7 @@
       try {
         await loadIndexCode();
         const res = await fetchAiModifyWithRetry({
-          target: "index",
+       target: __explicitTarget(originalInstruction) || "index",
           instruction: originalInstruction,
           currentContent: contextText.value,
           model: modelSelect.value,
@@ -1639,7 +1640,7 @@
       try {
         const effectiveInstruction = withPrevContext(promptPayload);
         const res = await fetchAiModifyWithRetry({
-          target: targetPageSelect ? targetPageSelect.value : "index.html",
+          target: __explicitTarget(effectiveInstruction) || (targetPageSelect ? targetPageSelect.value: "index.html"),
           instruction: effectiveInstruction,
           currentContent: contextText.value,
           model: modelSelect.value,
