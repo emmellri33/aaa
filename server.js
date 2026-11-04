@@ -611,6 +611,11 @@ app.post('/api/ai-modify', async (req, res) => {
         totalRemoved += String(ed.search).split("\n").length;
         totalAdded += String(ed.replace).split("\n").length;
       }
+      const netRemoved = totalRemoved - totalAdded;
+      if (netRemoved >= 30 && !String(finalParsed.explanation || "").includes("[위험]")) {
+        recordSecurityOrToolFailure("위험표기 누락 차단(422)", "순삭제 " + netRemoved + "줄", "[위험] 1줄 추가 후 재요청");
+        return res.status(422).json({ ok: false, error: "거부됨(422): 순삭제 " + netRemoved + "줄 — explanation [왜] 끝에 [위험] 한 줄(되돌릴 수 없는 범위와 이유)을 추가하세요.", patch: finalParsed });
+      }
       if (totalRemoved - totalAdded >= 50) {
         recordSecurityOrToolFailure("대규모 삭제 차단(422)", "순삭제 " + (totalRemoved - totalAdded) + "줄", "조각 분할 후 재요청");
         return res.status(422).json({ ok: false, error: "거부됨(422): 대규모 삭제 감지(순삭제 " + (totalRemoved - totalAdded) + "줄). 삭제 범위를 조각으로 나누거나 유지할 부분을 명시해 다시 요청하세요.", patch: finalParsed });
