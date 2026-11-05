@@ -6,7 +6,7 @@ const { chromium } = require("playwright");
 const fs = require("fs");
 
 const BASE = process.env.OBSERVE_BASE || "http://localhost:3000";
-const TARGETS = ["blank.html", "index.html"];
+const TARGETS = [String(process.argv[2] || "index.html")];
 const VIEWPORTS = [
   { name: "phone", width: 390, height: 844 },
   { name: "desktop", width: 1920, height: 1080 },

@@ -249,7 +249,7 @@ app.post('/api/chat', async (req, res) => {
       const prompt = [
         "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.",
         "",
-        "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다. 추가 확인이 필요하면 grep 또는 read 도구를 호출하세요.",
+        "당신은 정확하고 신중한 한국어 웹 개발 도우미입니다. 추가 확인이 필요하면 아래 JSON 규격으로 grep 또는 read 도구를 호출하세요: {\"type\":\"tool_calls\",\"calls\":[{\"tool\":\"grep\",\"args\":{\"pattern\":\"...\",\"file\":\"...\"}}]} — 1회차에 해결 못하면 question으로 끝내세요.",
         "쓰기 도구(run 포함)는 허용되지 않습니다. 오직 grep과 read만 허용됩니다.",
         "마지막에는 [의도] ... 형식으로 시작하는 최종 답변을 출력하세요.",
         "",
@@ -589,7 +589,15 @@ function hasSensitiveKeyword(str) {
 function isAllowedToolFile(name) {
   const n = String(name || "").trim();
   if (!n || isForbiddenFileName(n)) return false;
-  return ALLOWED_TOOL_FILES.includes(n);
+  if (ALLOWED_TOOL_FILES.includes(n)) return true;
+  if (n === "usage.log") return true;
+  try {
+    if (fs.existsSync(MANIFEST_PATH)) {
+      const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+      if (manifest[n]) return true;
+    }
+  } catch (e) {}
+  return false;
 }
 
 function runAllowedCommandAsync(rawCmd) {
@@ -1426,8 +1434,7 @@ app.post('/api/run', async (req, res) => {
       return res.status(400).json({ ok: false, error: "거부됨: grep 사용법: grep [옵션] 패턴 파일명" });
     }
     const targetFile = cleanTokens[cleanTokens.length - 1];
-    const allowedGrepFiles = ["index.html", "blank.html", "server.js", "failures.md", "memory.json", "package.json"];
-    if (!allowedGrepFiles.includes(targetFile)) {
+    if (!isAllowedToolFile(targetFile)) {
       return res.status(400).json({ ok: false, error: "거부됨: grep 대상 파일은 워크스페이스 일반 파일만 허용됩니다." });
     }
     const flags = cleanTokens.slice(0, -2);
@@ -1495,7 +1502,7 @@ app.get('/api/observe-shot', (req, res) => {
   } catch (e) {}
 
   // Run observe-local.js dynamically if needed
-  execFile("node", ["observe-local.js"], { cwd: __dirname, timeout: 120000 }, (err) => {
+  execFile("node", ["observe-local.js", String(req.query.target || "index.html")], { cwd: __dirname, timeout: 120000 }, (err) => {
     returnImage();
   });
 });

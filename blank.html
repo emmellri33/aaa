@@ -1057,12 +1057,14 @@
       if (!htmlStr.includes("<html") || !htmlStr.includes("</html>")) {
         return { ok: false, reason: "<html>...</html> 기본 구조가 깨졌습니다." };
       }
-      const scriptMatch = htmlStr.match(/<script>([\s\S]*?)<\/script>/);
-      if (scriptMatch && scriptMatch[1]) {
-        try {
-          new Function(scriptMatch[1]);
-        } catch (syntaxErr) {
-          return { ok: false, reason: "JavaScript 문법 오류: " + syntaxErr.message };
+      const scriptMatches = [...htmlStr.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
+      for (const match of scriptMatches) {
+        if (match[1] && match[1].trim()) {
+          try {
+            new Function(match[1]);
+          } catch (syntaxErr) {
+            return { ok: false, reason: "JavaScript 문법 오류: " + syntaxErr.message };
+          }
         }
       }
       return { ok: true };
@@ -1137,7 +1139,7 @@
       try {
         await loadIndexCode();
         const res = await fetchAiModifyWithRetry({
-       target: __explicitTarget(originalInstruction) || "index",
+       target: __explicitTarget(originalInstruction) || ((typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) || "index"),
           instruction: originalInstruction,
           currentContent: contextText.value,
           model: modelSelect.value,
