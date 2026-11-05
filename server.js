@@ -110,6 +110,12 @@ function extractRelevantHtmlSnippet(html, queryText) {
   return sorted.map(i => (i + 1) + ": " + lines[i]).join("\n");
 }
 
+function normalizeOwner(raw, filename) {
+  const o = String(raw || "").trim().toLowerCase();
+  if (o === "system" || o === "cockpit" || o === "gemgem" || o === "user") return o;
+  if (filename === "cockpit.html" || filename === "blank.html") return "cockpit";
+  return o || "user";
+}
 function getCreator(filename) {
   try {
     if (!fs.existsSync(MANIFEST_PATH)) {
@@ -117,9 +123,20 @@ function getCreator(filename) {
     }
     const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
     if (filename === "index.html") return "system";
-    return manifest[filename] || "user";
+    if (filename === "blank.html" || filename === "cockpit.html") {
+      const raw = manifest[filename];
+      if (!raw) return "cockpit";
+      const o = normalizeOwner(raw, filename);
+      if (o === "gemgem") return "cockpit"; // 구 manifest 승격 (B1a 이전 기록 호환)
+      return o;
+    }
+    const raw = manifest[filename];
+    if (!raw) return "user";
+    return normalizeOwner(raw, filename);
   } catch (e) {
-    return filename === "index.html" ? "system" : "user";
+    if (filename === "index.html") return "system";
+    if (filename === "blank.html" || filename === "cockpit.html") return "cockpit";
+    return "user";
   }
 }
 
@@ -809,7 +826,7 @@ app.post('/api/ai-modify', async (req, res) => {
       recordSecurityOrToolFailure("user 소유 파일 AI 패치 시도", targetFile, "403 거부");
       return res.status(403).json({ error: "거부됨(403): 사용자 소유 파일은 AI 패치가 허용되지 않습니다." });
     }
-    if (targetFile === "blank.html" || targetFile === "server.js" || (targetFile === "cockpit.html" && creator !== "gemgem")) {
+    if (targetFile === "blank.html" || targetFile === "server.js" || (targetFile === "cockpit.html" && !(creator === "gemgem" || creator === "cockpit"))) {
       return res.status(403).json({ error: "거부됨(403): 시스템 핵심 파일은 패치 대상이 아닙니다." });
     }
 
@@ -1242,7 +1259,7 @@ app.get('/api/files', (req, res) => {
       .filter(e => e.isFile() && !isForbiddenFileName(e.name))
       .map(e => {
         const stat = fs.statSync(path.join(__dirname, e.name));
-        return { name: e.name, size: stat.size, owner: manifest[e.name] || "user" };
+        return { name: e.name, size: stat.size, owner: getCreator(e.name) };
       });
     res.json({ ok: true, files });
   } catch (e) {
@@ -1269,6 +1286,125 @@ app.post('/api/files/write', (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/files/delete', (req, res) => {
+  try {
+    const { name } = req.body || {};
+    const filename = String(name || "").trim();
+    if (!filename || isForbiddenFileName(filename)) {
+      return res.status(403).json({ ok: false, error: "거부됨: 쓰기 금지된 파일명입니다." });
+    }
+    if (!filename.endsWith(".html")) {
+      return res.status(403).json({ ok: false, error: "거부됨: .html만 삭제할 수 있습니다." });
+    }
+    if (["index.html", "blank.html", "cockpit.html", "server.js"].includes(filename)) {
+      return res.status(403).json({ ok: false, error: "거부됨: 시스템·콕핏 파일은 삭제할 수 없습니다." });
+    }
+    const owner = getCreator(filename);
+    if (owner !== "gemgem") {
+      return res.status(403).json({ ok: false, error: "거부됨: gemgem 소유만 삭제할 수 있습니다 (현재: " + owner + ")." });
+    }
+    const p = path.join(__dirname, filename);
+    if (!fs.existsSync(p)) {
+      return res.status(404).json({ ok: false, error: "파일이 존재하지 않습니다: " + filename });
+    }
+    saveSnapshotToDisk(fs.readFileSync(p, "utf8"), filename);
+    fs.unlinkSync(p);
+    try {
+      if (fs.existsSync(MANIFEST_PATH)) {
+        const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
+        if (manifest[filename]) { delete manifest[filename]; fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf8"); }
+      }
+    } catch (e) {}
+    res.json({ ok: true, name: filename });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/files/rename', (req, res) => {
+  try {
+    const { name, newName } = req.body || {};
+    const oldN = String(name || "").trim();
+    const newN = String(newName || "").trim();
+    if (!oldN || isForbiddenFileName(oldN) || !newN || isForbiddenFileName(newN)) {
+      return res.status(403).json({ ok: false, error: "거부됨: 쓰기 금지된 파일명입니다." });
+    }
+    if (!oldN.endsWith(".html") || !newN.endsWith(".html")) {
+      return res.status(403).json({ ok: false, error: "거부됨: .html끼리만 이름을 바꿀 수 있습니다." });
+    }
+    if (["index.html", "blank.html", "cockpit.html", "server.js"].includes(oldN) || ["index.html", "blank.html", "cockpit.html", "server.js"].includes(newN)) {
+      return res.status(403).json({ ok: false, error: "거부됨: 시스템·콕핏 파일은 이름을 바꿀 수 없습니다." });
+    }
+    if (!/^[a-z0-9-]{1,40}\.html$/.test(newN)) {
+      return res.status(400).json({ ok: false, error: "새 파일명이 올바르지 않습니다 (소문자·숫자·하이픈, 40자 이내)." });
+    }
+    const owner = getCreator(oldN);
+    if (owner !== "gemgem") {
+      return res.status(403).json({ ok: false, error: "거부됨: gemgem 소유만 이름을 바꿀 수 있습니다 (현재: " + owner + ")." });
+    }
+    const po = path.join(__dirname, oldN);
+    const pn = path.join(__dirname, newN);
+    if (!fs.existsSync(po)) {
+      return res.status(404).json({ ok: false, error: "파일이 존재하지 않습니다: " + oldN });
+    }
+    if (fs.existsSync(pn)) {
+      return res.status(400).json({ ok: false, error: "이미 있는 파일명입니다: " + newN });
+    }
+    const content = fs.readFileSync(po, "utf8");
+    saveSnapshotToDisk(content, oldN);
+    fs.writeFileSync(pn, content, "utf8");
+    saveSnapshotToDisk(content, newN);
+    fs.unlinkSync(po);
+    try {
+      let manifest = {};
+      if (fs.existsSync(MANIFEST_PATH)) { manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8")); }
+      const ow = manifest[oldN] || "gemgem";
+      delete manifest[oldN];
+      manifest[newN] = ow;
+      fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf8");
+    } catch (e) {}
+    res.json({ ok: true, name: newN, oldName: oldN });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/check', (req, res) => {
+  try {
+    const { file, content } = req.body || {};
+    const filename = String(file || "").trim();
+    if (!filename || isForbiddenFileName(filename)) {
+      return res.status(400).json({ ok: false, error: "거부됨(400): 허용되지 않은 파일명입니다." });
+    }
+    const text = String(content == null ? "" : content);
+    if (filename === "server.js" || filename.endsWith(".js")) {
+      const tmp = path.join("/tmp", "check-" + Date.now() + "-" + Math.floor(Math.random() * 1000000) + ".js");
+      try { fs.writeFileSync(tmp, text, "utf8"); } catch (e) { return res.status(500).json({ ok: false, error: "임시 파일 쓰기 실패: " + e.message }); }
+      execFile(process.execPath, ["--check", tmp], { timeout: 10000 }, (err, stdout, stderr) => {
+        try { fs.unlinkSync(tmp); } catch (e) {}
+        if (err) {
+          return res.json({ ok: false, file: filename, error: String((stderr || stdout || err.message) || "문법 오류").slice(0, 2000) });
+        }
+        return res.json({ ok: true, file: filename });
+      });
+      return;
+    }
+    if (filename.endsWith(".html")) {
+      const re = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+      let m; let idx = 0; const errors = [];
+      while ((m = re.exec(text)) !== null) {
+        idx++;
+        try { new Function(m[1]); } catch (e) { errors.push("script #" + idx + ": " + e.message); }
+      }
+      if (errors.length) return res.json({ ok: false, file: filename, error: errors.join("\n").slice(0, 2000) });
+      return res.json({ ok: true, file: filename, blocks: idx });
+    }
+    return res.json({ ok: true, file: filename });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 
