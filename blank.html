@@ -228,6 +228,9 @@
             <button class="small-btn" id="vpDeskBtn" title="데스크톱 1920px">🖥 1920</button>
             <button class="small-btn" id="vpResetBtn" title="뷰포트 리셋">↩ 리셋</button>
             <button class="small-btn" onclick="loadIndexCode()">🔄 새로고침</button>
+            <button class="small-btn" id="toggleStageBtn" title="스테이징/라이브 전환">🔀 원본/스테이징</button>
+            <button class="small-btn" id="inspectBtn" title="미리보기 요소 클릭 선택">🎯 요소 선택</button>
+            <button class="small-btn" id="cmpShotBtn" title="적용 전/후 스크린샷 비교">📸 전/후</button>
           </span>
         </div>
         <div id="eyeReport" style="font-size:11.5px; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:4px 8px; margin-bottom:6px;">👁️ 눈: 대기 중 (패치 적용 후 자동 보고)</div>
@@ -273,6 +276,23 @@
         <div>
           <div style="font-weight:700; margin-bottom:6px;">🛠️ failures.md (실패 일지)</div>
           <pre id="failuresViewer" style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:8px; font-size:11.5px; max-height:140px; overflow-y:auto; white-space:pre-wrap;"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 모달: 전/후 스크린샷 비교 -->
+  <div class="modal-backdrop" id="shotModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>📸 적용 전 / 후 비교</span>
+        <button class="small-btn" onclick="closeModal('shotModal')">닫기</button>
+      </div>
+      <div class="modal-body">
+        <div id="cmpNote" style="font-size:12px;color:#64748b;">스냅샷이 없습니다. 패치를 1건 진행하면 전/후가 저장됩니다.</div>
+        <div style="display:flex;gap:8px;">
+          <div style="flex:1;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">적용 전</div><img id="cmpImgPre" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;" /></div>
+          <div style="flex:1;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">적용 후</div><img id="cmpImgPost" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;" /></div>
         </div>
       </div>
     </div>
@@ -627,6 +647,31 @@
     }
     loadIndexCode();
     reloadIndexBtn.onclick = loadIndexCode;
+    window.__rtErrors = [];
+    (function __hookIframeRt() {
+      const fr = document.getElementById("indexPreview");
+      if (!fr || fr.__rtHooked) return;
+      fr.__rtHooked = true;
+      fr.addEventListener("load", () => {
+        try {
+          const w = fr.contentWindow;
+          if (!w) return;
+          w.addEventListener("error", (e) => {
+            try {
+              const sig = String((e && e.message) || "error") + "@" + String((e && e.filename) || "") + ":" + String((e && e.lineno) || "");
+              if (window.__rtErrors.length < 20) window.__rtErrors.push({ sig: sig.slice(0, 200), at: Date.now() });
+            } catch {}
+          });
+          w.addEventListener("unhandledrejection", (e) => {
+            try {
+              const r = e && e.reason;
+              const sig = "unhandledrejection: " + String((r && (r.message || r)) || "");
+              if (window.__rtErrors.length < 20) window.__rtErrors.push({ sig: sig.slice(0, 200), at: Date.now() });
+            } catch {}
+          });
+        } catch {}
+      });
+    })();
 
     // --- 눈 v1: 뷰포트 조절 + getComputedStyle 보고 (서버 변경 없음, 읽기 전용) ---
     function setPreviewViewport(px) {
@@ -719,6 +764,105 @@
       if (d) d.onclick = () => { setPreviewViewport(1920); runEyeReport("뷰포트 1920"); };
       if (r) r.onclick = () => { setPreviewViewport(0); runEyeReport("리셋"); };
     })();
+    window.__stagedHtml = null;
+    window.__preShot = null;
+    window.__postShot = null;
+    (function wireStageTools() {
+      const tg = document.getElementById("toggleStageBtn");
+      if (tg) tg.onclick = () => {
+        if (isStagingPreview) { setStagingMode(false); }
+        else if (window.__stagedHtml) { setStagingMode(true, window.__stagedHtml); }
+      };
+      const ib = document.getElementById("inspectBtn");
+      if (ib) ib.onclick = () => toggleInspector();
+      const cb = document.getElementById("cmpShotBtn");
+      if (cb) cb.onclick = () => showShotCompare();
+    })();
+    function cssPathFor(el) {
+      try {
+        if (!el || el.nodeType !== 1) return null;
+        if (el.id) return "#" + el.id;
+        const parts = [];
+        let cur = el;
+        while (cur && cur.nodeType === 1 && cur.tagName.toLowerCase() !== "html" && parts.length < 5) {
+          const tag = cur.tagName.toLowerCase();
+          let nth = "";
+          try {
+            const par = cur.parentElement;
+            if (par) {
+              const same = [...par.children].filter(c => c.tagName === cur.tagName);
+              if (same.length > 1) nth = ":nth-of-type(" + (same.indexOf(cur) + 1) + ")";
+            }
+          } catch {}
+          let seg = tag + nth;
+          if (cur.hasAttribute && cur.hasAttribute("data-gemgem-root")) seg += "[data-gemgem-root]";
+          else if (cur.className && typeof cur.className === "string" && cur.className.trim() && !/\s/.test(cur.className.trim())) seg += "." + cur.className.trim();
+          parts.unshift(seg);
+          cur = cur.parentElement;
+        }
+        return parts.join(" > ");
+      } catch { return null; }
+    }
+    function findLineForSelector(sel) {
+      try {
+        const src = (typeof contextText !== "undefined" && contextText.value) || "";
+        if (!src || !sel) return -1;
+        const lines = src.split("\n");
+        let key = sel;
+        const m = sel.match(/#([\w\-]+)/);
+        if (m) key = m[1];
+        else {
+          const t = sel.match(/([\w\-]+)(?:\.|#|:|\[|$)/);
+          if (t) key = t[1]; else return -1;
+        }
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes(key)) return i + 1;
+        }
+        return -1;
+      } catch { return -1; }
+    }
+    let __inspecting = false;
+    function toggleInspector() {
+      const btn = document.getElementById("inspectBtn");
+      const frame = document.getElementById("indexPreview");
+      __inspecting = !__inspecting;
+      if (btn) btn.style.background = __inspecting ? "#ea580c" : "";
+      try { if (frame) frame.style.pointerEvents = "auto"; } catch {}
+      if (__inspecting && frame) {
+        try {
+          const doc = frame.contentDocument;
+          if (doc) doc.addEventListener("click", __inspectClick, true);
+        } catch {}
+      }
+    }
+    function __inspectClick(e) {
+      if (!__inspecting) return;
+      try { e.preventDefault(); e.stopPropagation(); } catch {}
+      __inspecting = false;
+      const btn = document.getElementById("inspectBtn");
+      if (btn) btn.style.background = "";
+      let sel = null;
+      try { sel = cssPathFor(e.target); } catch {}
+      if (!sel) return;
+      const ln = findLineForSelector(sel);
+      try {
+        chatInput.value = sel + (ln > 0 ? " (" + ln + "행)" : "");
+        adjustTextareaHeight();
+        chatInput.focus();
+      } catch {}
+    }
+    function showShotCompare() {
+      try {
+        const pre = document.getElementById("cmpImgPre");
+        const post = document.getElementById("cmpImgPost");
+        const note = document.getElementById("cmpNote");
+        const hasPre = !!window.__preShot, hasPost = !!window.__postShot;
+        if (pre) { pre.src = hasPre ? window.__preShot : ""; pre.style.display = hasPre ? "block" : "none"; }
+        if (post) { post.src = hasPost ? window.__postShot : ""; post.style.display = hasPost ? "block" : "none"; }
+        if (note) note.style.display = (hasPre && hasPost) ? "none" : "block";
+        document.getElementById("shotModal").classList.add("open");
+      } catch {}
+    }
 
     // --- 10, 18, 19, 20. 대화방 관리 (최근 50개 localStorage) & 맥락 경고 & HANDOFF ---
     function loadRoomsState() {
@@ -1453,14 +1597,22 @@
           applyBtn.style.background = "#ea580c";
           if (discardBtn) discardBtn.style.display = "inline-block";
           setStagingMode(true, working);
+          window.__stagedHtml = working;
           statusSpan.style.color = "#2563eb";
           statusSpan.innerText = `✅ 검증 통과(${edits.length}조각, 스냅샷済 · 스테이징 렌더됨) — 확정하려면 한 번 더 누르세요`;
           try { await runEyeReport("스테이징", { reload: false }); } catch (e) { statusSpan.innerText += " (스테이징 눈 실패)"; }
+          try {
+            const _tr0 = (typeof patch !== "undefined" && patch && patch.target) ? patch.target : ((typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) || "index.html");
+            const _sr0 = await fetch("/api/observe-shot?target=" + encodeURIComponent(_tr0 === "index" ? "index.html" : _tr0));
+            const _sd0 = await _sr0.json();
+            window.__preShot = (_sd0 && _sd0.ok && _sd0.image) ? ("data:image/png;base64," + _sd0.image) : null;
+          } catch { window.__preShot = null; }
           return;
         }
         if (discardBtn) discardBtn.style.display = "none";
 
         backupContent = current;
+        window.__rtBase = Date.now();
         // live 보호 v2: 패치 카드 확인 선택자(없으면 기본 #hello)로 렌더 검증 후 자동 롤백
    const _ptF = (typeof patch !== "undefined" && patch && patch.target) ? patch.target : "index.html";
         const confirmSelector = (patch && patch.confirmSelector) ? patch.confirmSelector : null;
@@ -1515,6 +1667,18 @@
             } catch (e) {
               rollbackReason = "iframe 렌더 검증 예외: " + e.message;
             }
+            try {
+              const _rtT0 = Date.now();
+              let _rtSeen = (window.__rtErrors || []).filter(e => e && e.at >= (window.__rtBase || 0));
+              while (_rtSeen.length === 0 && !rollbackReason && (Date.now() - _rtT0) < 2500) {
+                await new Promise(r => setTimeout(r, 250));
+                _rtSeen = (window.__rtErrors || []).filter(e => e && e.at >= (window.__rtBase || 0));
+              }
+            } catch {}
+            const freshRt = (window.__rtErrors || []).filter(e => e && e.at >= (window.__rtBase || 0));
+            if (!rollbackReason && freshRt.length > 0) {
+              rollbackReason = "런타임 에러(" + freshRt.length + "건): " + String(freshRt[0].sig || "").slice(0, 120);
+            }
           }
 
           // 3) 시각 판정 검증 (스크린샷 기반)
@@ -1523,6 +1687,7 @@
               const _tp = (typeof _ptF !== "undefined" && _ptF && _ptF !== "index") ? _ptF : null;
               const targetPage = _tp ? _tp : (targetPageSelect ? targetPageSelect.value : "index.html");              const shotRes = await fetch(`/api/observe-shot?target=${encodeURIComponent(targetPage)}`);
               const shotData = await shotRes.json();
+              window.__postShot = (shotData && shotData.ok && shotData.image) ? ("data:image/png;base64," + shotData.image) : null;
               if (shotData.ok && shotData.image) {
                 const verifyRes = await fetch("/api/verify-render", {
                   method: "POST",
@@ -1532,6 +1697,8 @@
                 const verifyData = await verifyRes.json();
                 if (!verifyData.ok) {
                   rollbackReason = `시각적 깨짐: ${verifyData.reason}`;
+                } else {
+                  try { window.__lastVerifyReason = String(verifyData.reason || "깨짐 없음"); } catch {}
                 }
               } else {
                 console.warn("스크린샷 획득 실패, 시각 검증 생략:", shotData.error);
@@ -1577,6 +1744,7 @@
           statusSpan.style.color = "#059669";
           statusSpan.innerText = `전 조각(${edits.length}개) 원자적 반영됨 (렌더 검증 통과)`;
           try { await runEyeReport("적응 후"); } catch (e) { statusSpan.innerText += " (눈 실패)"; }
+          try { const _vr = window.__lastVerifyReason; if (_vr) document.getElementById("eyeReport").innerText += " · 시각 판정: " + String(_vr).slice(0, 200); } catch {}
         } else {
           disarmConfirm();
           const saveErr = resData.error || "저장 오류";
