@@ -137,8 +137,8 @@
     <div class="tab-pane" id="usageTab">
       <div class="commit-layout" style="max-width: 960px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 13px; color: #94a3b8;">추정식: 하한=글자/4, 상한=글자/1.5 (모든 수치는 추정치)</span>
-          <label style="font-size:12px;color:#94a3b8;">일일 상한 <input id="budgetInput" type="number" min="1000" step="1000" style="width:110px;background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:3px 8px;" /> <button class="btn" onclick="saveBudget()">저장</button></label>
+          <span style="font-size: 13px; color: #94a3b8;">API 실측 토큰 및 공식 단가 기반 비용(USD) 결산</span>
+          <label style="font-size:12px;color:#94a3b8;">일일 상한($) <input id="budgetInput" type="number" min="0.01" step="0.01" placeholder="1.00" style="width:110px;background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:3px 8px;" /> <button class="btn" onclick="saveBudget()">저장</button></label>
           <button class="btn" onclick="loadUsage()">🔄 새로고침</button>
         </div>
         <div id="usageSummaryGrid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
@@ -157,12 +157,13 @@
                   <th style="padding: 6px;">모델</th>
                   <th style="padding: 6px;">입력(글자)</th>
                   <th style="padding: 6px;">출력(글자)</th>
-                  <th style="padding: 6px;">입력 추정(토큰)</th>
-                  <th style="padding: 6px;">출력 추정(토큰)</th>
+                  <th style="padding: 6px;">입력(Tok)</th>
+                  <th style="padding: 6px;">출력(Tok)</th>
+                  <th style="padding: 6px;">비용(USD)</th>
                 </tr>
               </thead>
               <tbody id="usageRecentBody">
-                <tr><td colspan="7" style="padding: 8px; color: #94a3b8;">불러오는 중...</td></tr>
+                <tr><td colspan="8" style="padding: 8px; color: #94a3b8;">불러오는 중...</td></tr>
               </tbody>
             </table>
           </div>
@@ -197,14 +198,14 @@
       }
     }
 
-    function loadBudgetInput() { try { const el = document.getElementById("budgetInput"); if (el) el.value = localStorage.getItem("gemgem-budget-daily") || "200000"; } catch (e) {} }
+    function loadBudgetInput() { try { const el = document.getElementById("budgetInput"); if (el) { let v = localStorage.getItem("gemgem-budget-daily") || "1.00"; if (Number(v) >= 1000) { v = "1.00"; try { localStorage.setItem("gemgem-budget-daily", v); } catch (e2) {} } el.value = v; } } catch (e) {} }
     function saveBudget() {
       try {
         const el = document.getElementById("budgetInput");
-        const v = Math.max(1000, Math.floor(Number(el && el.value) || 200000));
+        const v = Math.max(0.01, Math.round((Number(el && el.value) || 1.00) * 100) / 100);
         localStorage.setItem("gemgem-budget-daily", String(v));
         if (el) el.value = String(v);
-        alert("✅ 일일 상한 저장: " + v);
+        alert("✅ 일일 상한 저장: $" + Number(v).toFixed(2));
       } catch (e) { alert("❌ 저장 실패: " + e.message); }
     }
     async function loadUsage() {
@@ -216,7 +217,7 @@
         dayEl.innerText = msg;
         weekEl.innerText = msg;
         monthEl.innerText = msg;
-        tbody.innerHTML = `<tr><td colspan="7" style="padding: 8px; color: #94a3b8;">${msg}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="padding: 8px; color: #94a3b8;">${msg}</td></tr>`;
       };
       try {
         const r = await fetch("/api/files/read?name=usage.log");
@@ -236,7 +237,7 @@
         const byDay = (totals && totals.byDay) || {};
         const now = new Date();
         const sumDays = (daysCount) => {
-          const acc = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 };
+          const acc = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0, inTok: 0, outTok: 0, cost: 0 };
           for (let i = 0; i < daysCount; i++) {
             const dt = new Date(now.getTime() - i * 86400000).toISOString().slice(0, 10);
             const b = byDay[dt];
@@ -246,17 +247,20 @@
               acc.inHi += Number(b.inHi) || 0;
               acc.outLo += Number(b.outLo) || 0;
               acc.outHi += Number(b.outHi) || 0;
+            acc.inTok += Number(b.inTok) || 0;
+            acc.outTok += Number(b.outTok) || 0;
+            acc.cost += Number(b.cost) || 0;
             }
           }
           return acc;
         };
-        const fmtBox = (s) => `호출: <strong>${s.calls}회</strong><br>입력 추정: ${s.inLo} ~ ${s.inHi}<br>출력 추정: ${s.outLo} ~ ${s.outHi}`;
+        const fmtBox = (s) => `호출: <strong>${s.calls}회</strong><br>입력: ${s.inTok} tok<br>출력: ${s.outTok} tok<br>비용: $${(Number(s.cost) || 0).toFixed(4)}`;
         dayEl.innerHTML = fmtBox(sumDays(1));
         weekEl.innerHTML = fmtBox(sumDays(7));
         monthEl.innerHTML = fmtBox(sumDays(30));
         const parsedRows = rawLines.slice(-20).reverse().map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
         if (parsedRows.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" style="padding: 8px; color: #94a3b8;">기록 없음</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" style="padding: 8px; color: #94a3b8;">기록 없음</td></tr>';
         } else {
           tbody.innerHTML = parsedRows.map(row => `<tr style="border-bottom: 1px solid #1e293b;">
             <td style="padding: 6px;">${row.t || "-"}</td>
@@ -264,8 +268,9 @@
             <td style="padding: 6px;">${row.model || "-"}</td>
             <td style="padding: 6px;">${row.inC ?? 0}</td>
             <td style="padding: 6px;">${row.outC ?? 0}</td>
-            <td style="padding: 6px;">${row.inLo ?? 0} ~ ${row.inHi ?? 0}</td>
-            <td style="padding: 6px;">${row.outLo ?? 0} ~ ${row.outHi ?? 0}</td>
+            <td style="padding: 6px;">${row.inTok ?? 0}</td>
+            <td style="padding: 6px;">${row.outTok ?? 0}</td>
+            <td style="padding: 6px;">$${(Number(row.cost) || 0).toFixed(4)}</td>
           </tr>`).join("");
         }
       } catch (e) {

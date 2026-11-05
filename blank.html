@@ -1253,14 +1253,15 @@
       }
     });
 
-    function refreshBudgetBadge(dayHi) {
+    function refreshBudgetBadge(dayCost) {
       try {
-        const lim = Number(localStorage.getItem("gemgem-budget-daily") || "200000");
+        let lim = Number(localStorage.getItem("gemgem-budget-daily") || "1.00");
+        if (lim >= 1000) { lim = 1.00; try { localStorage.setItem("gemgem-budget-daily", "1.00"); } catch (e2) {} }
         const el = document.getElementById("budgetBadge");
         if (!el) return;
-        if ((Number(dayHi) || 0) >= lim) {
+        if ((Number(dayCost) || 0) >= lim) {
           el.hidden = false;
-          el.innerText = `⚠️ 오늘 토큰 상한 초과 (${Math.round(Number(dayHi) / 1000)}k/${Math.round(lim / 1000)}k)`;
+          el.innerText = `⚠️ 오늘 상한 초과 ($${(Number(dayCost) || 0).toFixed(4)}/$${lim.toFixed(2)})`;
         } else { el.hidden = true; }
       } catch (e) {}
     }
@@ -1303,12 +1304,18 @@
         });
       }
 
-      if (role === "ai" && usage && (usage.inEst != null || usage.inHi != null)) {
+      if (role === "ai" && usage && (Number(usage.inTok) > 0 || usage.inEst != null || usage.inHi != null)) {
         const badge = document.createElement("div");
         badge.className = "usage-badge";
-        const iu = usage.inEst != null ? usage.inEst : usage.inHi;
-        const ou = usage.outEst != null ? usage.outEst : usage.outHi;
-        badge.innerText = `🔢 약 ${Number(iu || 0) + Number(ou || 0)} tok · ${usage.model || ""}`;
+        if (Number(usage.inTok) > 0) {
+          const it = Number(usage.inTok) || 0, ot = Number(usage.outTok) || 0;
+          const cs = (Number(usage.cost) || 0).toFixed(4);
+          badge.innerText = `⚡ ${usage.model || ""} · ${(it + ot).toLocaleString()} tok (입 ${it.toLocaleString()}/출 ${ot.toLocaleString()}) · $${cs}`;
+        } else {
+          const iu = usage.inEst != null ? usage.inEst : usage.inHi;
+          const ou = usage.outEst != null ? usage.outEst : usage.outHi;
+          badge.innerText = `🔢 약 ${Number(iu || 0) + Number(ou || 0)} tok · ${usage.model || ""}`;
+        }
         bubble.appendChild(badge);
       }
 
@@ -2052,7 +2059,7 @@
           chatLoading.remove();
           const dlCards = extractDownloadCards(promptPayload, (cd && cd.reply) || "");
           appendMsg("ai", (cd && (cd.reply || cd.error)) || "(응답 없음)", null, false, false, (cd && cd.usage) || null, dlCards.length ? { cards: dlCards } : null);
-          refreshBudgetBadge(cd && cd.usage && cd.usage.dayHi);
+          refreshBudgetBadge(cd && cd.usage && cd.usage.dayCost);
         } catch (e) {
           chatLoading.remove();
           appendMsg("ai", e && e.name === "AbortError" ? "사용자에 의해 요청이 중지되었습니다." : "오류 발생: " + e.message);
@@ -2094,7 +2101,7 @@
         } else if (d.patch.type === "question") {
           const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
           appendMsg("ai", `❓ ${toolBadge}[의도 확인 및 답변]\n${d.patch.question}`, null, false, false, (d && d.usage) || null);
-          refreshBudgetBadge(d && d.usage && d.usage.dayHi);
+          refreshBudgetBadge(d && d.usage && d.usage.dayCost);
         } else if (d.patch.type === "patch") {
           appendPatchCard(d.patch, true, effectiveInstruction, 0);
         }

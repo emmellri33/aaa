@@ -8,6 +8,29 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let memoryApiKey = process.env.GEMINI_API_KEY || "";
 const GEMINI_API_KEY = (memoryApiKey || (memoryApiKey || process.env.GEMINI_API_KEY)) || '';
+// USD 단가표 (1M 토큰 기준, 2026-11-05 사용자 확정값)
+const USD_PRICE = {
+  "flash-lite": { in: 0.30, out: 2.50 },
+  "3.8-flash": { in: 0.75, out: 3.75 },
+  "pro": { in: 2.00, out: 12.00 },
+  "argon": { in: 2.00, out: 10.00 }
+};
+function costOf(model, inTok, outTok) {
+  try {
+    const m = String(model || "");
+    const it = Number(inTok), ot = Number(outTok);
+    if (!(it > 0) && !(ot > 0)) return 0;
+    let key = null;
+    if (m.includes("argon")) key = "argon";
+    else if (m.includes("pro")) key = "pro";
+    else if (m.includes("3.8-flash")) key = "3.8-flash";
+    else if (m.includes("flash-lite")) key = "flash-lite";
+    else if (m.includes("flash")) key = "flash-lite";
+    if (!key) return 0;
+    const p = USD_PRICE[key];
+    return (Math.max(0, it) / 1e6) * p.in + (Math.max(0, ot) / 1e6) * p.out;
+  } catch (e) { return 0; }
+}
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
@@ -179,6 +202,10 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
   const outLo = Math.ceil(outC / 4);
   const outHi = Math.ceil(outC / 1.5);
   const summary = { model: String(model || GEMINI_MODEL), inLo, inHi, outLo, outHi };
+  const callCost = costOf(model, inTok, outTok);
+  summary.inTok = (Number(inTok) > 0) ? Number(inTok) : null;
+  summary.outTok = (Number(outTok) > 0) ? Number(outTok) : null;
+  summary.cost = callCost;
   const calibNow = readCalibFactors();
   summary.inEst = Math.max(1, Math.round(inC * calibNow.in));
   summary.outEst = Math.max(1, Math.round(outC * calibNow.out));
@@ -213,12 +240,13 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
       bucket.inHi = (Number(bucket.inHi) || 0) + inHi;
       bucket.outLo = (Number(bucket.outLo) || 0) + outLo;
       bucket.outHi = (Number(bucket.outHi) || 0) + outHi;
+      bucket.cost = (Number(bucket.cost) || 0) + callCost;
     };
     addStats(totals.all);
     const nowIso = new Date().toISOString();
     const dayKey = nowIso.slice(0, 10);
     if (!totals.byDay[dayKey]) {
-      totals.byDay[dayKey] = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 };
+      totals.byDay[dayKey] = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0, cost: 0 };
     }
     addStats(totals.byDay[dayKey]);
     const dayKeys = Object.keys(totals.byDay).sort();
@@ -228,7 +256,7 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
     }
     const _dk = new Date().toISOString().slice(0, 10);
     const _db = (totals.byDay && totals.byDay[_dk]) || {};
-    summary.dayHi = (Number(_db.inHi) || 0) + (Number(_db.outHi) || 0);
+    summary.dayCost = (Number(_db.cost) || 0);
     const entry = JSON.stringify({
       t: nowIso.slice(0, 19) + "Z",
       route: String(route || "chat"),
@@ -238,7 +266,10 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
       inLo,
       inHi,
       outLo,
-      outHi
+      outHi,
+      inTok: (Number(inTok) > 0) ? Number(inTok) : null,
+      outTok: (Number(outTok) > 0) ? Number(outTok) : null,
+      cost: callCost
     });
     rawLines.push(entry);
     if (rawLines.length > 20) {
