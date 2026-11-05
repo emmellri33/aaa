@@ -1296,8 +1296,9 @@ app.post('/api/run', async (req, res) => {
   const rawCmd = String((req.body && (req.body.command || req.body.cmd)) || "").trim();
   if (!rawCmd) return res.status(400).json({ ok: false, error: "명령어를 입력하세요." });
 
-  if (rawCmd === "ask" || rawCmd.startsWith("ask ")) {
-    const question = rawCmd === "ask" ? "" : rawCmd.slice(4).trim().slice(0, 2000);
+  const lowHead = rawCmd.toLowerCase();
+  if (lowHead === "ask" || lowHead.startsWith("ask ")) {
+    const question = lowHead === "ask" ? "" : rawCmd.slice(4).trim().slice(0, 2000);
     if (!question) {
       return res.status(400).json({ ok: false, error: "질문을 입력하세요." });
     }
