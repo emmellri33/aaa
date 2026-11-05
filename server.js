@@ -343,19 +343,63 @@ app.get('/api/page/index', (req, res) => {
 
 // --- live 보호 v2 (live-v2-snapshot-middleware): 저장 직전 디스크 스냅샷 (원본 핸들러로 next() 통과, 중복 route 없음) ---
 const SNAPSHOT_META_PATH = path.join(__dirname, 'snapshot-meta.json');
-function saveSnapshotToDisk(content) {
+function saveSnapshotToDisk(content, filename) {
   try {
-    fs.writeFileSync(SNAPSHOT_META_PATH, JSON.stringify({ content, timestamp: new Date().toISOString() }, null, 2), "utf8");
+    let t = String(filename || "index.html").trim() || "index.html";
+    if (t === "index") t = "index.html";
+    let meta = { byTarget: {} };
+    if (fs.existsSync(SNAPSHOT_META_PATH)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(SNAPSHOT_META_PATH, "utf8"));
+        if (raw && typeof raw === "object") {
+          if (raw.byTarget && typeof raw.byTarget === "object" && !Array.isArray(raw.byTarget)) {
+            meta.byTarget = { ...raw.byTarget };
+          }
+          if (typeof raw.content === "string") {
+            if (!meta.byTarget["index.html"]) {
+              meta.byTarget["index.html"] = {
+                content: raw.content,
+                timestamp: typeof raw.timestamp === "string" ? raw.timestamp : new Date(0).toISOString()
+              };
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    meta.byTarget[t] = { content: String(content), timestamp: new Date().toISOString() };
+    const keys = Object.keys(meta.byTarget);
+    if (keys.length > 10) {
+      keys.sort((a, b) => {
+        const ta = (meta.byTarget[a] && meta.byTarget[a].timestamp) || "";
+        const tb = (meta.byTarget[b] && meta.byTarget[b].timestamp) || "";
+        return ta.localeCompare(tb);
+      });
+      while (Object.keys(meta.byTarget).length > 10) {
+        const oldest = keys.shift();
+        if (!oldest) break;
+        delete meta.byTarget[oldest];
+      }
+    }
+    fs.writeFileSync(SNAPSHOT_META_PATH, JSON.stringify({ byTarget: meta.byTarget }, null, 2), "utf8");
     return true;
   } catch (e) {
     return false;
   }
 }
-function loadSnapshotFromDisk() {
+function loadSnapshotFromDisk(filename) {
   try {
     if (!fs.existsSync(SNAPSHOT_META_PATH)) return null;
+    let t = String(filename || "index.html").trim() || "index.html";
+    if (t === "index") t = "index.html";
     const data = JSON.parse(fs.readFileSync(SNAPSHOT_META_PATH, "utf8"));
-    return typeof data.content === "string" ? data.content : null;
+    if (data && data.byTarget && typeof data.byTarget === "object") {
+      const entry = data.byTarget[t];
+      if (entry && typeof entry.content === "string") return entry.content;
+    }
+    if (t === "index.html" && data && typeof data.content === "string") {
+      return data.content;
+    }
+    return null;
   } catch (e) {
     return null;
   }
@@ -366,7 +410,7 @@ app.post('/api/page/:target', (req, res, next) => {
     if (target === "index") target = "index.html";
     const p = path.join(__dirname, target);
     if (req.body && typeof req.body.content === 'string' && fs.existsSync(p)) {
-      saveSnapshotToDisk(fs.readFileSync(p, 'utf8'));
+      saveSnapshotToDisk(fs.readFileSync(p, 'utf8'), target);
     }
   } catch (e) {}
   next();
@@ -1208,7 +1252,7 @@ app.post('/api/files/write', (req, res) => {
     const p = path.join(__dirname, filename);
 
     if (fs.existsSync(p)) {
-      saveSnapshotToDisk(fs.readFileSync(p, "utf8"));
+      saveSnapshotToDisk(fs.readFileSync(p, "utf8"), filename);
     } else if (filename.endsWith('.html')) {
       setCreator(filename, "gemgem");
     }
@@ -1266,7 +1310,7 @@ app.post('/api/cockpit/target', (req, res) => {
     }
     const p = path.join(__dirname, file);
     if (fs.existsSync(p)) {
-      saveSnapshotToDisk(fs.readFileSync(p, "utf8"));
+      saveSnapshotToDisk(fs.readFileSync(p, "utf8"), file);
     }
     fs.writeFileSync(p, content || "", "utf8");
     res.json({ ok: true });
@@ -1489,18 +1533,24 @@ app.post('/api/verify-render', async (req, res) => {
 // --- live 보호 v2: 디스크 스냅샷 자동 복원 (복원 후 재확인 포함) ---
 app.post('/api/rollback', async (req, res) => {
   try {
-    const backup = loadSnapshotFromDisk();
+    let target = (req.body && typeof req.body.target === "string" && req.body.target.trim()) ? req.body.target.trim() : "index.html";
+    if (target === "index") target = "index.html";
+    if (isForbiddenFileName(target)) {
+      return res.status(400).json({ ok: false, error: "거부됨(400): 허용되지 않은 대상 파일명입니다." });
+    }
+    const backup = loadSnapshotFromDisk(target);
     if (!backup) {
-      return res.status(404).json({ ok: false, error: "복원할 디스크 스냅샷이 없습니다." });
+      return res.status(404).json({ ok: false, error: "복원할 디스크 스냅샷이 없습니다: " + target });
     }
-    fs.writeFileSync(INDEX_PATH, backup, 'utf8');
-    const verified = fs.readFileSync(INDEX_PATH, 'utf8') === backup;
+    const targetPath = path.join(__dirname, target);
+    fs.writeFileSync(targetPath, backup, 'utf8');
+    const verified = fs.readFileSync(targetPath, 'utf8') === backup;
     if (!verified) {
-      recordSecurityOrToolFailure("롤백 실패", "복원 후 재확인 불일치", "디스크 복원 검증 실패");
-      return res.status(500).json({ ok: false, error: "복원 후 재확인 실패" });
+      recordSecurityOrToolFailure("롤백 실패 (" + target + ")", "복원 후 재확인 불일치", "디스크 복원 검증 실패");
+      return res.status(500).json({ ok: false, error: "복원 후 재확인 실패: " + target });
     }
-    recordSecurityOrToolFailure("확정 후 자동롤백 실행", "렌더 검증 실패로 디스크 백업본 원복 완료", "디스크 스냅샷 복원＋재확인 성공");
-    res.json({ ok: true, verified: true, message: "자동 롤백 완료" });
+    recordSecurityOrToolFailure("확정 후 자동롤백 실행 (" + target + ")", target + " 렌더 검증 실패로 디스크 백업본 원복 완료", "디스크 스냅샷 복원＋재확인 성공");
+    res.json({ ok: true, target, verified: true, message: "자동 롤백 완료 (" + target + ")" });
   } catch (e) {
     recordSecurityOrToolFailure("롤백 실패", e.message, "디스크 복원 중 예외 발생");
     res.status(500).json({ ok: false, error: e.message });

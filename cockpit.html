@@ -347,7 +347,7 @@
         const lr = await fetch("/api/files");
         const ld = await lr.json();
         if (ld.ok && Array.isArray(ld.files) && ld.files.some(f => f.name === name)) { alert("이미 있는 파일명입니다."); return; }
-        const skeleton = '<!DOCTYPE html>\n<html lang="ko">\n<head><meta charset="UTF-8"><title>' + base + '</title></head>\n<body>\n<h1>' + base + '</h1>\n</body>\n</html>\n';
+        const skeleton = '<!DOCTYPE html>\n<html lang="ko">\n<head><meta charset="UTF-8"><title>' + base + '</title></head>\n<body data-gemgem-root>\n<h1>' + base + '</h1>\n</body>\n</html>\n';
         const r = await fetch("/api/files/write", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: skeleton }) });
         const d = await r.json();
         if (!d.ok) { alert("생성 실패: " + (d.error || "오류")); return; }

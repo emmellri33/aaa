@@ -603,7 +603,7 @@
         frame.srcdoc = htmlContent;
       } else {
         try { frame.removeAttribute("srcdoc"); } catch {}
-        frame.src = "index.html?t=" + Date.now();
+        frame.src = ((typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) || "index.html") + "?t=" + Date.now();
       }
     }
     
@@ -1346,7 +1346,7 @@
         backupContent = current;
         // live 보호 v2: 패치 카드 확인 선택자(없으면 기본 #hello)로 렌더 검증 후 자동 롤백
    const _ptF = (typeof patch !== "undefined" && patch && patch.target) ? patch.target : "index.html";
-        const confirmSelector = (patch && patch.confirmSelector) ? patch.confirmSelector : (_ptF === "cockpit.html" ? ".header-title" : "#hello");
+        const confirmSelector = (patch && patch.confirmSelector) ? patch.confirmSelector : null;
 
         const r = await fetch(__patchSaveUrl(typeof patch !== "undefined" ? patch : null), {
           method: "POST",
@@ -1371,7 +1371,7 @@
           if (!rollbackReason) {
             try {
               const frame = document.getElementById("indexPreview");
-              const _wantSrc = (typeof _ptF !== "undefined" && _ptF === "cockpit.html") ? "cockpit.html" : "index.html";
+              let _wantSrc = (typeof _ptF !== "undefined" && _ptF) ? _ptF : "index.html"; if (_wantSrc === "index") _wantSrc = "index.html";
               if (frame && (frame.getAttribute("src") || "").split("?")[0] !== _wantSrc) {
                 await new Promise((resolve) => {
                   let _done = false;
@@ -1385,8 +1385,14 @@
               if (!doc) {
                 rollbackReason = "iframe document 접근 불가";
               } else {
-                if (!doc.querySelector(confirmSelector)) {
-                  rollbackReason = `패치 카드 확인 선택자(${confirmSelector})가 렌더에 존재하지 않음`;
+                let _sel = confirmSelector;
+                if (!_sel) {
+                  if (_wantSrc === "cockpit.html") _sel = ".header-title";
+                  else if (_wantSrc === "index.html") _sel = "#hello";
+                  else _sel = doc.querySelector("[data-gemgem-root]") ? "[data-gemgem-root]" : "body";
+                }
+                if (!doc.querySelector(_sel)) {
+                  rollbackReason = `패치 카드 확인 선택자(${_sel})가 렌더에 존재하지 않음`;
                 }
               }
             } catch (e) {
@@ -1421,7 +1427,8 @@
           // [자동 롤백 실행]
           if (rollbackReason) {
             try {
-              const rbRes = await fetch("/api/rollback", { method: "POST" });
+              const _rbT = (typeof _ptF !== "undefined" && _ptF) ? _ptF : ((typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) || "index.html");
+              const rbRes = await fetch("/api/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target: _rbT }) });
               const rbJson = await rbRes.json();
               if (!rbJson.ok) throw new Error(rbJson.error || "rollback failed");
               await loadIndexCode();
