@@ -271,6 +271,7 @@
             <span style="font-weight:700;">🧠 memory.json (방 공유 사실만 기록)</span>
             <button class="small-btn primary" id="saveMemoryBtn">💾 memory.json 저장</button>
           </div>
+          <div id="memChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;max-height:96px;overflow-y:auto;"></div>
           <textarea id="memoryEditor" rows="6" style="width:100%; font-family:monospace; font-size:12px; padding:8px; border:1px solid #cbd5e1; border-radius:8px;"></textarea>
         </div>
         <div>
@@ -495,7 +496,28 @@
     }
     window.runQuickTerm = (cmd) => executeTerminalCommand(cmd);
     termRunBtn.onclick = () => executeTerminalCommand(termInput.value);
-    termInput.onkeydown = (e) => { if (e.key === "Enter") executeTerminalCommand(termInput.value); };
+    let __termHist = [];
+    let __termHistIdx = -1;
+    termInput.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        const v = termInput.value;
+        if (v.trim()) { try { __termHist.push(v); } catch {} }
+        __termHistIdx = -1;
+        executeTerminalCommand(v);
+      } else if (e.key === "ArrowUp" && __termHist.length) {
+        e.preventDefault();
+        if (__termHistIdx < 0) __termHistIdx = __termHist.length;
+        if (__termHistIdx > 0) __termHistIdx--;
+        termInput.value = __termHist[__termHistIdx] || "";
+      } else if (e.key === "ArrowDown" && __termHist.length) {
+        e.preventDefault();
+        if (__termHistIdx >= 0) {
+          __termHistIdx++;
+          termInput.value = __termHistIdx >= __termHist.length ? "" : __termHist[__termHistIdx];
+          if (__termHistIdx >= __termHist.length) __termHistIdx = -1;
+        }
+      }
+    };
 
     // --- 4. 스냅샷 (/api/snapshot) ---
     document.getElementById("menuRunSnapshot").onclick = async () => {
@@ -544,6 +566,46 @@
         });
 
         memEl.value = mData.content || JSON.stringify({ facts: [] }, null, 2);
+        try { renderMemoryChips(mData.content); } catch {}
+    function renderMemoryChips(jsonText) {
+      try {
+        const box = document.getElementById("memChips");
+        if (!box) return;
+        box.innerHTML = "";
+        let data = {};
+        try { data = JSON.parse(jsonText || "{}"); } catch { data = {}; }
+        let scopes = { global: Array.isArray(data.global) ? data.global : [] };
+        if (Array.isArray(data.facts)) scopes = { global: data.facts };
+        if (data.rooms && typeof data.rooms === "object") {
+          for (const k of Object.keys(data.rooms)) { if (Array.isArray(data.rooms[k])) scopes[k] = data.rooms[k]; }
+        }
+        {
+          const fl = [];
+          for (const k of Object.keys(scopes)) { (scopes[k] || []).forEach(f => fl.push({ scope: k, text: String(f) })); }
+          const mkChip = (label, title, bg, fn) => {
+            const c = document.createElement("button");
+            c.className = "small-btn"; c.innerText = label; c.title = title || label;
+            c.style.background = bg || ""; c.style.maxWidth = "220px"; c.style.overflow = "hidden"; c.style.textOverflow = "ellipsis"; c.style.whiteSpace = "nowrap";
+            c.onclick = fn; box.appendChild(c); return c;
+          };
+          let curScope = box.getAttribute("data-scope") || "전체";
+          const drawFacts = () => {
+            box.querySelectorAll("[data-fact]").forEach(el => el.remove());
+            fl.filter(f => curScope === "전체" || f.scope === curScope).slice(0, 60).forEach(f => {
+              const short = f.text.length > 24 ? f.text.slice(0, 24) + "…" : f.text;
+              mkChip("[" + f.scope + "] " + short, f.text, "#f1f5f9", () => {
+                try { chatInput.value = (chatInput.value ? chatInput.value + "\n" : "") + f.text; adjustTextareaHeight(); chatInput.focus(); } catch {}
+              }).setAttribute("data-fact", "1");
+            });
+          };
+          mkChip("전체(" + fl.length + ")", "전체 보기", curScope === "전체" ? "#bfdbfe" : "", () => { try { box.setAttribute("data-scope", "전체"); renderMemoryChips(jsonText); } catch {} });
+          Object.keys(scopes).forEach(k => {
+            mkChip(k + "(" + scopes[k].length + ")", k + "만 보기", curScope === k ? "#bfdbfe" : "", () => { try { box.setAttribute("data-scope", k); renderMemoryChips(jsonText); } catch {} });
+          });
+          drawFacts();
+        }
+      } catch {}
+    }
         failEl.innerText = flData.content || "(기록 없음)";
       } catch (e) {
         listEl.innerText = "불러오기 실패: " + e.message;

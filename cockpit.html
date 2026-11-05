@@ -75,7 +75,7 @@
       </div>
       <div class="term-display" id="termDisplay"></div>
       <div class="term-input-row">
-        <input type="text" class="term-input" id="termInput" placeholder="명령어 입력 (예: git status, git log --oneline -5, grep body index.html)" onkeydown="if(event.key==='Enter') runActiveTerminal()" />
+        <input type="text" class="term-input" id="termInput" placeholder="명령어 입력 (예: git status, git log --oneline -5, grep body index.html)" onkeydown="if(event.key==='Enter') runActiveTerminal(); else cockHistNav(event)" />
         <button class="btn" onclick="runActiveTerminal()">실행</button>
       </div>
     </div>
@@ -101,8 +101,11 @@
             <button class="btn" id="checkFileBtn" onclick="checkCurrentFile()" style="display: none;">🔍 문법검사</button>
             <button class="btn" id="renameFileBtn" onclick="renameCurrentFile()" style="display: none;">✏️ 이름변경</button>
             <button class="btn" id="deleteFileBtn" onclick="deleteCurrentFile()" style="display: none; background: #7f1d1d;">🗑️ 삭제</button>
+            <button class="btn" id="diffSnapBtn" onclick="showSnapshotDiff()">🔍 스냅샷 Diff</button>
+            <button class="btn" id="rollbackFileBtn" onclick="rollbackCurrentFile()" style="background:#7c2d12;">↩ 롤백</button>
           </div>
           <textarea class="editor-textarea" id="fileEditor" placeholder="내용 없음" disabled oninput="refreshDirtyState()" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='s'){event.preventDefault();saveCurrentFile();}"></textarea>
+          <pre id="snapDiffView" hidden style="background:#020617;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px 10px;font-family:monospace;font-size:12px;max-height:220px;overflow-y:auto;white-space:pre-wrap;margin-top:8px;"></pre>
         </div>
       </div>
     </div>
@@ -272,6 +275,27 @@
     // --- 1. 터미널 탭 로직 ---
     let termSessions = [];
     let activeSessionId = null;
+    let __cockHist = [];
+    let __cockHistIdx = -1;
+    function cockHistNav(e) {
+      try {
+        const input = document.getElementById("termInput");
+        if (!input || !__cockHist.length) return;
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          if (__cockHistIdx < 0) __cockHistIdx = __cockHist.length;
+          if (__cockHistIdx > 0) __cockHistIdx--;
+          input.value = __cockHist[__cockHistIdx] || "";
+        } else if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (__cockHistIdx >= 0) {
+            __cockHistIdx++;
+            input.value = __cockHistIdx >= __cockHist.length ? "" : __cockHist[__cockHistIdx];
+            if (__cockHistIdx >= __cockHist.length) __cockHistIdx = -1;
+          }
+        }
+      } catch {}
+    }
 
     function addTerminalSession() {
       const id = "term_" + Date.now();
@@ -335,6 +359,7 @@
       if (!sess) return;
 
       sess.history += `$ ${cmd}\n`;
+      try { __cockHist.push(cmd); __cockHistIdx = -1; } catch {}
       const display = document.getElementById("termDisplay");
       display.innerText = sess.history;
       display.scrollTop = display.scrollHeight;
@@ -360,6 +385,64 @@
     let currentSelectedFile = null;
     let editorOriginal = "";
     let editorDirty = false;
+    function renderLineDiff(oldText, newText) {
+      try {
+        const a = String(oldText || "").split("\n"), b = String(newText || "").split("\n");
+        if (a.length * b.length > 9000000) return "파일이 너무 큼 (행 " + a.length + " vs " + b.length + ") — 전체 비교 생략";
+        const n = a.length, m = b.length;
+        const dp = new Uint16Array((n + 1) * (m + 1));
+        for (let i = n - 1; i >= 0; i--) {
+          for (let j = m - 1; j >= 0; j--) {
+            dp[i * (m + 1) + j] = (a[i] === b[j]) ? (dp[(i + 1) * (m + 1) + j + 1] + 1) : Math.max(dp[(i + 1) * (m + 1) + j], dp[i * (m + 1) + j + 1]);
+          }
+        }
+        let out = "", i = 0, j = 0, rows = 0, skipped = 0;
+        while (i < n && j < m) {
+          if (a[i] === b[j]) { i++; j++; }
+          else if (dp[(i + 1) * (m + 1) + j] >= dp[i * (m + 1) + j + 1]) { out += (rows < 300 ? "- " + a[i] + "\n" : ""); rows++; i++; }
+          else { out += (rows < 300 ? "+ " + b[j] + "\n" : ""); rows++; j++; }
+        }
+        while (i < n) { out += (rows < 300 ? "- " + a[i] + "\n" : ""); rows++; i++; }
+        while (j < m) { out += (rows < 300 ? "+ " + b[j] + "\n" : ""); rows++; j++; }
+        if (!out) return "(차이 없음 — 스냅샷과 현재본 동일)";
+        if (rows > 300) out += "... 외 " + (rows - 300) + "행 생략";
+        return out;
+      } catch (e) { return "Diff 실패: " + e.message; }
+    }
+    async function showSnapshotDiff() {
+      if (!currentSelectedFile) return alert("먼저 파일을 선택하세요");
+      const view = document.getElementById("snapDiffView");
+      try {
+        if (view) { view.hidden = false; view.innerText = "⏳ 스냅샷 비교 중..."; }
+        const t = (currentSelectedFile === "index") ? "index.html" : currentSelectedFile;
+        const r = await fetch("/api/files/read?name=" + encodeURIComponent("snapshot-meta.json"));
+        const d = await r.json();
+        let snapText = null;
+        try {
+          const meta = JSON.parse(d.content || "{}");
+          const ent = (meta && meta.byTarget) ? (meta.byTarget[t] || (t === "index.html" ? meta.byTarget["index"] : null)) : null;
+          if (ent && typeof ent.content === "string") snapText = ent.content;
+        } catch {}
+        if (snapText == null) { if (view) view.innerText = "스냅샷 없음: " + t + " (저장 후 다시 시도)"; return; }
+        let cur = null;
+        try {
+          const cr = await fetch("/api/files/read?name=" + encodeURIComponent(t));
+          const cd = await cr.json();
+          if (cd.ok) cur = cd.content || "";
+        } catch {}
+        if (cur == null) cur = document.getElementById("fileEditor").value || "";
+        if (view) view.innerText = renderLineDiff(snapText, cur);
+      } catch (e) { if (view) view.innerText = "Diff 실패: " + e.message; }
+    }
+    async function rollbackCurrentFile() {
+      if (!currentSelectedFile) return alert("먼저 파일을 선택하세요");
+      try {
+        const r = await fetch("/api/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target: currentSelectedFile }) });
+        const d = await r.json();
+        if (d.ok) { alert("✅ 롤백 완료: " + currentSelectedFile); selectFileToEdit(currentSelectedFile); }
+        else alert("❌ 롤백 실패: " + (d.error || "오류"));
+      } catch (e) { alert("❌ 롤백 오류: " + e.message); }
+    }
 
     function buildSkeleton(kind, base) {
       const head = '<!DOCTYPE html>\n<html lang="ko">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + base + '</title>\n<style>*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f172a;color:#f8fafc;padding:24px}h1{font-size:20px}a{color:#38bdf8}.grid{display:grid;gap:12px}.card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px}@media(max-width:600px){body{padding:12px}}</style>\n</head>\n<body data-gemgem-root>\n<h1>' + base + '</h1>\n';
