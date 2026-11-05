@@ -170,6 +170,7 @@
         <label style="font-size: 13px; font-weight: 600;">모델:</label>
         <select id="modelSelect">
           <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (메인)</option>
+          <option value="auto">✨ Auto (자동 선택)</option>
           <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (초경량)</option>
           <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (유료·preview)</option>
           <option value="gemini-4-argon">Gemini 4 Argon (유료·실험)</option>
@@ -190,6 +191,7 @@
 
       <!-- 파일 첨부 칩 -->
       <div class="attachment-preview" id="attachmentPreview" style="display: none;"></div>
+      <div id="failBanner" style="display:none;align-items:center;gap:8px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin:6px 10px 0;"><span id="failBannerText" style="flex:1;"></span><button class="small-btn" onclick="refreshFailBanner()">↻</button><button class="small-btn" onclick="document.getElementById('failBanner').style.display='none'">✕</button></div>
 
       <!-- 입력창 (자동늘림, Enter=줄바꿈, Ctrl+Enter=보내기) -->
       <div class="input-wrapper">
@@ -403,6 +405,16 @@
       modelSelect.value = "gemini-3.5-flash-lite";
     }
     modelSelect.onchange = () => { saveRoomPin(); };
+    function resolveModel(kind) {
+      try {
+        const sel = (typeof modelSelect !== "undefined" && modelSelect && modelSelect.value) || "";
+        if (sel && sel !== "auto") return sel;
+        const ctxLen = ((typeof contextText !== "undefined" && contextText.value) ? contextText.value.length : 0) + ((typeof chatInput !== "undefined" && chatInput.value) ? chatInput.value.length : 0);
+        if (kind === "patch") return "gemini-3.8-flash";
+        if (ctxLen > 24000) return "gemini-3.1-pro-preview";
+        return "gemini-3.8-flash";
+      } catch { return "gemini-3.8-flash"; }
+    }
 
     function escapeHtml(str) {
       return String(str || "")
@@ -612,6 +624,21 @@
       }
     }
     document.getElementById("menuOpenFiles").onclick = openFilesModal;
+    async function refreshFailBanner() {
+      try {
+        const r = await fetch("/api/failures");
+        const d = await r.json();
+        const box = document.getElementById("failBanner");
+        const tx = document.getElementById("failBannerText");
+        if (!box || !tx) return;
+        const txt = String((d && d.content) || "");
+        const rows = txt.split("\n").map(s => s.trim()).filter(l => /^\|/.test(l) && !/^\|[\s|\-:]+$/.test(l) && !/^\|\s*언제/.test(l)).slice(-3);
+        if (!rows.length) { box.style.display = "none"; return; }
+        box.style.display = "flex";
+        tx.innerText = "⚠️ 최근 실패 " + rows.length + "건: " + rows.map(rr => (rr.split("|")[2] || "").trim()).join(" / ").slice(0, 160);
+      } catch {}
+    }
+    refreshFailBanner();
 
     async function attachWorkspaceFile(filename) {
       try {
@@ -1540,7 +1567,7 @@
         const impact = !existsNow ? "" : (occ >= 2 ? ` · ⚠️ 출현 ${occ}회(변형 잔존 의심)` : ` · 출현 ${occ}회`);
         return `
           <div style="border:1px solid #e2e8f0; border-radius:8px; padding:8px; margin-bottom:8px; background:#ffffff;">
-            <div style="font-size:11.5px; font-weight:700; color:#334155; margin-bottom:4px;">🧩 조각 ${idx + 1} / ${edits.length} — <span>${badge}${impact}</span></div>
+            <div style="font-size:11.5px; font-weight:700; color:#334155; margin-bottom:4px;"><input type="checkbox" class="piece-check" data-i="${idx}" checked style="margin-right:6px;transform:scale(1.2);">🧩 조각 ${idx + 1} / ${edits.length} — <span>${badge}${impact}</span></div>
             <div style="font-size:11px; color:#dc2626; font-weight:600; margin-bottom:2px;">- 찾을 조각 (search)</div>
             <pre style="background:#fee2e2; color:#991b1b; padding:8px; border-radius:6px; font-size:12px; overflow-x:auto; white-space:pre-wrap; margin-bottom:6px;">${escapeHtml(ed.search)}</pre>
             <div style="font-size:11px; color:#059669; font-weight:600; margin-bottom:2px;">+ 바꿀 조각 (replace)</div>
@@ -1618,6 +1645,24 @@
 
         // 1. 원자적(Atomic) 사전 검증: 하나라도 매치 실패하거나 공백/속성 증발 시 전체 미적용
         let working = current;
+        const edits = baseEditsFilter();
+        function baseEditsFilter() {
+          try {
+            const boxes = [...bubble.querySelectorAll(".piece-check")];
+            const idx = boxes.filter(c => c.checked).map(c => +c.getAttribute("data-i"));
+            if (!idx.length) return null;
+            const base = normalizePatchEdits(patch);
+            return base.filter((_, i) => idx.includes(i));
+          } catch { return null; }
+        }
+        if (!edits || !edits.length) {
+          try { applyBtn.innerText = "✅ 선택 조각 적용"; } catch {}
+          statusSpan.style.color = "#dc2626";
+          statusSpan.innerText = "❌ 선택된 조각이 없습니다 (체크박스를 1개 이상 선택하세요)";
+          try { disarmConfirm(); } catch {}
+          return;
+        }
+        try { applyBtn.innerText = "✅ 선택 " + edits.length + "조각 적용"; } catch {}
         for (let i = 0; i < edits.length; i++) {
           const ed = edits[i];
           if (!working.includes(ed.search)) {
@@ -2000,7 +2045,7 @@
           const cr = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: promptPayload, pageContext: (typeof contextText !== "undefined" ? contextText.value : ""), model: modelSelect.value, roomId: currentRoomId, images: imageFiles, recentTurns: buildRecentTurns() }),
+            body: JSON.stringify({ message: promptPayload, pageContext: (typeof contextText !== "undefined" ? contextText.value : ""), model: resolveModel("chat"), roomId: currentRoomId, images: imageFiles, recentTurns: buildRecentTurns() }),
             signal: currentAbortController.signal
           });
           const cd = await cr.json();
@@ -2033,7 +2078,7 @@
           target: __explicitTarget(effectiveInstruction) || (targetPageSelect ? targetPageSelect.value: "index.html"),
           instruction: effectiveInstruction,
           currentContent: contextText.value,
-          model: modelSelect.value,
+          model: resolveModel("patch"),
           images: imageFiles,
           recentTurns: buildRecentTurns()
         }, currentAbortController.signal);

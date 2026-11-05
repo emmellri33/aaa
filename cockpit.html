@@ -122,6 +122,7 @@
           <div style="display: flex; gap: 8px;">
             <input type="text" class="term-input" id="commitMessageInput" placeholder="커밋 메시지 입력..." />
             <button class="btn" onclick="submitCommit()">커밋</button>
+            <button class="btn" onclick="exportBackup()">⬇ 백업(zip)</button>
           </div>
           <div id="commitResultMsg" style="font-size: 12px; margin-top: 4px;"></div>
         </div>
@@ -651,6 +652,42 @@
     }
 
     // --- 3. 커밋 탭 로직 ---
+    async function exportBackup() {
+      const msg = document.getElementById("commitResultMsg");
+      try {
+        if (msg) { msg.style.color = "#94a3b8"; msg.innerText = "⏳ 백업 준비 중..."; }
+        if (!window.JSZip) {
+          await new Promise((res, rej) => {
+            const s = document.createElement("script");
+            s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+            s.onload = res;
+            s.onerror = () => rej(new Error("JSZip CDN 로드 실패"));
+            document.head.appendChild(s);
+          });
+        }
+        const lr = await fetch("/api/files");
+        const ld = await lr.json();
+        const files = ((ld && ld.files) || []).filter(f => f && f.name && (f.size || 0) <= 512000);
+        if (!files.length) throw new Error("백업할 파일이 없습니다");
+        const zip = new window.JSZip();
+        for (const f of files) {
+          try {
+            const r = await fetch("/api/files/read?name=" + encodeURIComponent(f.name));
+            const d = await r.json();
+            if (d.ok) zip.file(f.name, d.content || "");
+          } catch {}
+        }
+        const blob = await zip.generateAsync({ type: "blob" });
+        const a = document.createElement("a");
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+        a.href = URL.createObjectURL(blob);
+        a.download = "backup-" + stamp + ".zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        if (msg) { msg.style.color = "#22c55e"; msg.innerText = "✅ 백업 다운로드 시작 (" + files.length + "개 파일)"; }
+      } catch (e) { if (msg) { msg.style.color = "#ef4444"; msg.innerText = "❌ 백업 실패: " + e.message; } }
+    }
     async function loadGitStatus() {
       const statusPre = document.getElementById("gitStatusPre");
       const logPre = document.getElementById("gitLogPre");
