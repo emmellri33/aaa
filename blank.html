@@ -308,6 +308,13 @@
     const chatMessages = document.getElementById("chatMessages");
     const chatInput = document.getElementById("chatInput");
     const sendBtn = document.getElementById("sendBtn");
+    const complexBtn = document.createElement("button");
+    complexBtn.className = "action-btn";
+    complexBtn.id = "complexBtn";
+    complexBtn.title = "파이프라인 실행 (도구＋패치)";
+    complexBtn.innerText = "Complex";
+    sendBtn.parentNode.insertBefore(complexBtn, sendBtn.nextSibling);
+    complexBtn.onclick = () => handleSend(true);
     const fileInput = document.getElementById("fileInput");
     const attachmentPreview = document.getElementById("attachmentPreview");
     const contextText = document.getElementById("contextText");
@@ -1535,7 +1542,7 @@
       appendMsg("ai", "✅ 인계문(HANDOFF)을 밑바탕 컨텍스트로 설정하고 핵심 사실을 memory.json에 병합했습니다. 이어서 진행할 작업을 말씀해 주세요!");
     }
 
-    async function handleSend() {
+    async function handleSend(isComplex = false) {
       // 대기 중 클릭 시 중지(AbortController)
       if (currentAbortController) {
         currentAbortController.abort();
@@ -1627,6 +1634,33 @@
       adjustTextareaHeight();
       attachedFiles = [];
       renderAttachments();
+      if (!isComplex) {
+        const chatLoading = document.createElement("div");
+        chatLoading.className = "msg ai";
+        chatLoading.innerHTML = '<div class="avatar">G</div><div class="bubble">생각 중... (중지 가능)</div>';
+        chatMessages.appendChild(chatLoading);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        currentAbortController = new AbortController();
+        setPendingState(true);
+        try {
+          const cr = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: promptPayload, pageContext: (typeof contextText !== "undefined" ? contextText.value : ""), model: modelSelect.value, roomId: currentRoomId, images: imageFiles }),
+            signal: currentAbortController.signal
+          });
+          const cd = await cr.json();
+          chatLoading.remove();
+          appendMsg("ai", (cd && (cd.reply || cd.error)) || "(응답 없음)");
+        } catch (e) {
+          chatLoading.remove();
+          appendMsg("ai", e && e.name === "AbortError" ? "사용자에 의해 요청이 중지되었습니다." : "오류 발생: " + e.message);
+        } finally {
+          setPendingState(false);
+          updateTargetPageSelect();
+        }
+        return;
+      }
 
       const loadingMsg = document.createElement("div");
       loadingMsg.className = "msg ai";

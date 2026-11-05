@@ -63,6 +63,7 @@
       <button class="tab-btn active" onclick="switchMainTab('termTab')">💻 터미널</button>
       <button class="tab-btn" onclick="switchMainTab('filesTab')">📁 파일 편집</button>
       <button class="tab-btn" onclick="switchMainTab('commitTab')">🌿 커밋 관리</button>
+      <button class="tab-btn" onclick="switchMainTab('usageTab')">📊 사용량</button>
     </div>
   </header>
 
@@ -81,6 +82,9 @@
 
     <!-- 2. 파일 편집 탭 -->
     <div class="tab-pane" id="filesTab">
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <button class="btn" onclick="createNewPage()">＋ 새 페이지</button>
+      </div>
       <div class="files-layout">
         <div class="files-sidebar" id="filesList">
           <div style="font-size: 11px; color: #64748b; padding: 4px;">파일 목록 불러오는 중...</div>
@@ -116,6 +120,42 @@
         </div>
       </div>
     </div>
+
+    <!-- 4. 사용량 탭 -->
+    <div class="tab-pane" id="usageTab">
+      <div class="commit-layout" style="max-width: 960px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 13px; color: #94a3b8;">추정식: 하한=글자/4, 상한=글자/1.5 (모든 수치는 추정치)</span>
+          <button class="btn" onclick="loadUsage()">🔄 새로고침</button>
+        </div>
+        <div id="usageSummaryGrid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+          <div class="card"><div class="card-title">📅 오늘 (일)</div><div id="usageDayBox" style="font-size: 13px;">불러오는 중...</div></div>
+          <div class="card"><div class="card-title">🗓️ 최근 7일 (주)</div><div id="usageWeekBox" style="font-size: 13px;">불러오는 중...</div></div>
+          <div class="card"><div class="card-title">📊 최근 30일 (월)</div><div id="usageMonthBox" style="font-size: 13px;">불러오는 중...</div></div>
+        </div>
+        <div class="card" style="flex: 1; overflow: hidden;">
+          <div class="card-title">🕒 최근 20건 호출 기록 (usage.log)</div>
+          <div style="overflow-y: auto; flex: 1;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; font-family: monospace; text-align: left;">
+              <thead>
+                <tr style="border-bottom: 1px solid #334155; color: #94a3b8;">
+                  <th style="padding: 6px;">시각(UTC)</th>
+                  <th style="padding: 6px;">경로</th>
+                  <th style="padding: 6px;">모델</th>
+                  <th style="padding: 6px;">입력(글자)</th>
+                  <th style="padding: 6px;">출력(글자)</th>
+                  <th style="padding: 6px;">입력 추정(토큰)</th>
+                  <th style="padding: 6px;">출력 추정(토큰)</th>
+                </tr>
+              </thead>
+              <tbody id="usageRecentBody">
+                <tr><td colspan="7" style="padding: 8px; color: #94a3b8;">불러오는 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -136,6 +176,74 @@
       if (tabId === "commitTab") {
         document.querySelectorAll(".tab-btn")[2].classList.add("active");
         loadGitStatus();
+      }
+      if (tabId === "usageTab") {
+        document.querySelectorAll(".tab-btn")[3].classList.add("active");
+        loadUsage();
+      }
+    }
+
+    async function loadUsage() {
+      const dayEl = document.getElementById("usageDayBox");
+      const weekEl = document.getElementById("usageWeekBox");
+      const monthEl = document.getElementById("usageMonthBox");
+      const tbody = document.getElementById("usageRecentBody");
+      const setEmpty = (msg) => {
+        dayEl.innerText = msg;
+        weekEl.innerText = msg;
+        monthEl.innerText = msg;
+        tbody.innerHTML = `<tr><td colspan="7" style="padding: 8px; color: #94a3b8;">${msg}</td></tr>`;
+      };
+      try {
+        const r = await fetch("/api/files/read?name=usage.log");
+        if (r.status === 404) { setEmpty("기록 없음"); return; }
+        const d = await r.json();
+        if (!d.ok || !d.content) { setEmpty("기록 없음"); return; }
+        const lines = String(d.content).split("\n").filter(Boolean);
+        if (lines.length === 0) { setEmpty("기록 없음"); return; }
+        let totals = { all: { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 }, byDay: {} };
+        let rawLines = lines;
+        if (lines[0].startsWith("#TOTALS ")) {
+          try { totals = JSON.parse(lines[0].slice(8)); } catch (e) {}
+          rawLines = lines.slice(1);
+        }
+        const byDay = (totals && totals.byDay) || {};
+        const now = new Date();
+        const sumDays = (daysCount) => {
+          const acc = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 };
+          for (let i = 0; i < daysCount; i++) {
+            const dt = new Date(now.getTime() - i * 86400000).toISOString().slice(0, 10);
+            const b = byDay[dt];
+            if (b) {
+              acc.calls += Number(b.calls) || 0;
+              acc.inLo += Number(b.inLo) || 0;
+              acc.inHi += Number(b.inHi) || 0;
+              acc.outLo += Number(b.outLo) || 0;
+              acc.outHi += Number(b.outHi) || 0;
+            }
+          }
+          return acc;
+        };
+        const fmtBox = (s) => `호출: <strong>${s.calls}회</strong><br>입력 추정: ${s.inLo} ~ ${s.inHi}<br>출력 추정: ${s.outLo} ~ ${s.outHi}`;
+        dayEl.innerHTML = fmtBox(sumDays(1));
+        weekEl.innerHTML = fmtBox(sumDays(7));
+        monthEl.innerHTML = fmtBox(sumDays(30));
+        const parsedRows = rawLines.slice(-20).reverse().map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        if (parsedRows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="padding: 8px; color: #94a3b8;">기록 없음</td></tr>';
+        } else {
+          tbody.innerHTML = parsedRows.map(row => `<tr style="border-bottom: 1px solid #1e293b;">
+            <td style="padding: 6px;">${row.t || "-"}</td>
+            <td style="padding: 6px;">${row.route || "-"}</td>
+            <td style="padding: 6px;">${row.model || "-"}</td>
+            <td style="padding: 6px;">${row.inC ?? 0}</td>
+            <td style="padding: 6px;">${row.outC ?? 0}</td>
+            <td style="padding: 6px;">${row.inLo ?? 0} ~ ${row.inHi ?? 0}</td>
+            <td style="padding: 6px;">${row.outLo ?? 0} ~ ${row.outHi ?? 0}</td>
+          </tr>`).join("");
+        }
+      } catch (e) {
+        setEmpty("불러오기 오류: " + e.message);
       }
     }
 
@@ -228,6 +336,25 @@
 
     // --- 2. 파일 편집 탭 로직 ---
     let currentSelectedFile = null;
+
+    async function createNewPage() {
+      const raw = prompt("새 페이지 파일명 (소문자·숫자·하이픈만, .html 자동 추가):", "my-page");
+      if (raw === null) return;
+      const base = String(raw).trim().toLowerCase().replace(/\.html$/, "");
+      if (!/^[a-z0-9-]{1,40}$/.test(base)) { alert("파일명이 올바르지 않습니다."); return; }
+      const name = base + ".html";
+      try {
+        const lr = await fetch("/api/files");
+        const ld = await lr.json();
+        if (ld.ok && Array.isArray(ld.files) && ld.files.some(f => f.name === name)) { alert("이미 있는 파일명입니다."); return; }
+        const skeleton = '<!DOCTYPE html>\n<html lang="ko">\n<head><meta charset="UTF-8"><title>' + base + '</title></head>\n<body>\n<h1>' + base + '</h1>\n</body>\n</html>\n';
+        const r = await fetch("/api/files/write", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, content: skeleton }) });
+        const d = await r.json();
+        if (!d.ok) { alert("생성 실패: " + (d.error || "오류")); return; }
+        await loadWorkspaceFiles();
+        alert("생성됨: " + name + " (주인: gemgem)");
+      } catch (e) { alert("오류: " + e.message); }
+    }
 
     async function loadWorkspaceFiles() {
       const listEl = document.getElementById("filesList");

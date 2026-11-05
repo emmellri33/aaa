@@ -8,7 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let memoryApiKey = process.env.GEMINI_API_KEY || "";
 const GEMINI_API_KEY = (memoryApiKey || (memoryApiKey || process.env.GEMINI_API_KEY)) || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
 const FAILURES_PATH = path.join(__dirname, 'failures.md');
@@ -134,6 +134,74 @@ function setCreator(filename, who) {
   } catch (e) {}
 }
 
+const USAGE_LOG_PATH = path.join(__dirname, "usage.log");
+
+function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
+  const inC = Math.max(0, Number(inChars) || 0);
+  const outC = Math.max(0, Number(outChars) || 0);
+  const inLo = Math.ceil(inC / 4);
+  const inHi = Math.ceil(inC / 1.5);
+  const outLo = Math.ceil(outC / 4);
+  const outHi = Math.ceil(outC / 1.5);
+  const summary = { model: String(model || GEMINI_MODEL), inLo, inHi, outLo, outHi };
+  try {
+    let totals = { all: { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 }, byDay: {} };
+    let rawLines = [];
+    if (fs.existsSync(USAGE_LOG_PATH)) {
+      const lines = fs.readFileSync(USAGE_LOG_PATH, "utf8").split("\n").filter(Boolean);
+      if (lines.length > 0 && lines[0].startsWith("#TOTALS ")) {
+        try {
+          const parsed = JSON.parse(lines[0].slice(8));
+          if (parsed && typeof parsed === "object") {
+            if (parsed.all && typeof parsed.all === "object") totals.all = parsed.all;
+            if (parsed.byDay && typeof parsed.byDay === "object") totals.byDay = parsed.byDay;
+          }
+        } catch (e) {}
+        rawLines = lines.slice(1);
+      } else {
+        rawLines = lines;
+      }
+    }
+    const addStats = (bucket) => {
+      bucket.calls = (Number(bucket.calls) || 0) + 1;
+      bucket.inLo = (Number(bucket.inLo) || 0) + inLo;
+      bucket.inHi = (Number(bucket.inHi) || 0) + inHi;
+      bucket.outLo = (Number(bucket.outLo) || 0) + outLo;
+      bucket.outHi = (Number(bucket.outHi) || 0) + outHi;
+    };
+    addStats(totals.all);
+    const nowIso = new Date().toISOString();
+    const dayKey = nowIso.slice(0, 10);
+    if (!totals.byDay[dayKey]) {
+      totals.byDay[dayKey] = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 };
+    }
+    addStats(totals.byDay[dayKey]);
+    const dayKeys = Object.keys(totals.byDay).sort();
+    while (dayKeys.length > 90) {
+      const oldKey = dayKeys.shift();
+      delete totals.byDay[oldKey];
+    }
+    const entry = JSON.stringify({
+      t: nowIso.slice(0, 19) + "Z",
+      route: String(route || "chat"),
+      model: String(model || GEMINI_MODEL),
+      inC,
+      outC,
+      inLo,
+      inHi,
+      outLo,
+      outHi
+    });
+    rawLines.push(entry);
+    if (rawLines.length > 20) {
+      rawLines = rawLines.slice(-20);
+    }
+    const outContent = "#TOTALS " + JSON.stringify(totals) + "\n" + rawLines.join("\n") + "\n";
+    fs.writeFileSync(USAGE_LOG_PATH, outContent, "utf8");
+  } catch (e) {}
+  return summary;
+}
+
 function buildMultimodalContents(textPrompt, images) {
   const parts = [{ text: textPrompt }];
   if (Array.isArray(images)) {
@@ -173,6 +241,8 @@ app.post('/api/chat', async (req, res) => {
     const MAX_CHAT_ROUNDS = 5;
 
     let finalReply = "";
+    const pageBlock = pageContext ? "[현재 파일 내용]\n" + String(pageContext).slice(0, 12000) + "\n\n" : "";
+    let totalIn = 0, totalOut = 0, lastUsage = null;
 
     for (let round = 1; round <= MAX_CHAT_ROUNDS; round++) {
       const historySection = toolHistoryBlocks.length > 0 ? ("\n\n" + toolHistoryBlocks.join("\n\n")) : "";
@@ -183,7 +253,7 @@ app.post('/api/chat', async (req, res) => {
         "쓰기 도구(run 포함)는 허용되지 않습니다. 오직 grep과 read만 허용됩니다.",
         "마지막에는 [의도] ... 형식으로 시작하는 최종 답변을 출력하세요.",
         "",
-        memoryBlock + historySection,
+        memoryBlock + pageBlock + historySection,
         "",
         "사용자 메시지: " + msg
       ].join("\n");
@@ -195,6 +265,9 @@ app.post('/api/chat', async (req, res) => {
           contents: buildMultimodalContents(prompt, round === 1 ? images : []),
         });
         rawText = (response && response.text) ? response.text : "";
+        totalIn += prompt.length;
+        totalOut += rawText.length;
+        lastUsage = response.usageMetadata || null;
       } catch (e) {
         rawText = "채팅 오류 발생: " + e.message;
       }
@@ -241,7 +314,15 @@ app.post('/api/chat', async (req, res) => {
       finalReply = "[의도] 사용자 질문 답변\n" + finalReply;
     }
 
-    res.json({ reply: finalReply });
+    const usage = logUsageCall({
+      route: "chat",
+      model: useModel,
+      inChars: totalIn,
+      outChars: totalOut,
+      inTok: lastUsage?.promptTokenCount ?? null,
+      outTok: lastUsage?.candidatesTokenCount ?? null
+    });
+    res.json({ reply: finalReply, usage });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';
@@ -712,6 +793,7 @@ app.post('/api/ai-modify', async (req, res) => {
     const TIME_LIMIT_MS = 120000;
 
     let finalParsed = null;
+    let totalIn = 0, totalOut = 0, lastUsage = null;
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       if (Date.now() - loopStartTime > TIME_LIMIT_MS || totalToolCallsCount > 12) {
@@ -749,12 +831,18 @@ app.post('/api/ai-modify', async (req, res) => {
         rawText = typeof mockResponses[round - 1] === "string"
           ? mockResponses[round - 1]
           : JSON.stringify(mockResponses[round - 1]);
+        totalIn += prompt.length;
+        totalOut += rawText.length;
+        lastUsage = null;
       } else {
         const response = await ai.models.generateContent({
           model: useModel,
           contents: buildMultimodalContents(prompt, round === 1 ? images : []),
         });
         rawText = (response && response.text) ? response.text : "";
+        totalIn += prompt.length;
+        totalOut += rawText.length;
+        lastUsage = response.usageMetadata || null;
       }
 
       const jsonStr = extractJsonString(rawText);
@@ -892,7 +980,16 @@ app.post('/api/ai-modify', async (req, res) => {
       return res.status(422).json({ ok: false, error: "거부됨(422): 근거 없는 완료 표현 금지(발견: \"" + hitBan + "\"). 증거(앵커·실행 결과) 기준으로 다시 작성하세요.", patch: finalParsed });
     }
 
-    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed });  } catch (e) {
+    const usage = logUsageCall({
+      route: "complex",
+      model: useModel,
+      inChars: totalIn,
+      outChars: totalOut,
+      inTok: lastUsage?.promptTokenCount ?? null,
+      outTok: lastUsage?.candidatesTokenCount ?? null
+    });
+    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed, usage });
+  } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';
     if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
@@ -1195,9 +1292,43 @@ app.get('/api/files/read', (req, res) => {
 });
 
 // --- 읽기 전용 터미널 실행 (/api/run) ---
-app.post('/api/run', (req, res) => {
-  const rawCmd = String((req.body && req.body.command) || "").trim();
+app.post('/api/run', async (req, res) => {
+  const rawCmd = String((req.body && (req.body.command || req.body.cmd)) || "").trim();
   if (!rawCmd) return res.status(400).json({ ok: false, error: "명령어를 입력하세요." });
+
+  if (rawCmd === "ask" || rawCmd.startsWith("ask ")) {
+    const question = rawCmd === "ask" ? "" : rawCmd.slice(4).trim().slice(0, 2000);
+    if (!question) {
+      return res.status(400).json({ ok: false, error: "질문을 입력하세요." });
+    }
+    try {
+      const askPrompt = USER_PROFILE_HEADER + "\n\n[질문]\n" + question;
+      const activeKey = getActiveKey();
+      if (!activeKey) {
+        const demoReply = '(AI 키 미설정) 데모 응답: "' + question + '"';
+        const usage = logUsageCall({ route: "ask", model: GEMINI_MODEL, inChars: askPrompt.length, outChars: demoReply.length, inTok: null, outTok: null });
+        return res.json({ ok: true, output: demoReply, usage });
+      }
+      const ai = new GoogleGenAI({ apiKey: activeKey });
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: askPrompt,
+      });
+      const reply = (response && response.text) ? response.text : "(응답 없음)";
+      const uMeta = response && response.usageMetadata ? response.usageMetadata : null;
+      const usage = logUsageCall({
+        route: "ask",
+        model: GEMINI_MODEL,
+        inChars: askPrompt.length,
+        outChars: reply.length,
+        inTok: uMeta?.promptTokenCount ?? null,
+        outTok: uMeta?.candidatesTokenCount ?? null
+      });
+      return res.json({ ok: true, output: reply, usage });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: "ask 오류: " + ((e && e.message) ? e.message : String(e)) });
+    }
+  }
 
   // 1. 셸 이어붙이기·리다이렉션 금지
   const chainChars = [";", "&&", "||", "|", "`", "$(", ">", "<", "\n", "\r"];
