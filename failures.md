@@ -21,4 +21,4 @@
 | 2026-11-05 08:53 | 관찰(4페이지) | 에러없음 | 스크린샷 4장 /tmp |
 | 2026-11-05 10:03 | read 금지 파일 차단(400) | file= | allowlist 파일만 read 허용 |
 | 2026-11-05 10:07 | 관찰(2페이지) | 에러없음 | 스크린샷 2장 /tmp |
-| 2026-11-05 10:09 | 패치 후 HTML/JS 검증 실패 | JavaScript 문법 오류: missing ) after argument list | 문법 오류 수정 자가수복 재요청 ×3 |
+| 2026-11-05 10:09 | 패치 후 HTML/JS 검증 실패 | JavaScript 문법 오류: missing ) after argument list | 문법 오류 수정 자가수복 재요청 ×4 |
