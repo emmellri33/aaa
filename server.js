@@ -153,6 +153,24 @@ function setCreator(filename, who) {
 
 const USAGE_LOG_PATH = path.join(__dirname, "usage.log");
 
+const CALIB_DEFAULT_IN = 0.25, CALIB_DEFAULT_OUT = 0.25;
+function readCalibFactors() {
+  try {
+    if (!fs.existsSync(USAGE_LOG_PATH)) return { in: CALIB_DEFAULT_IN, out: CALIB_DEFAULT_OUT, n: 0 };
+    const lines = fs.readFileSync(USAGE_LOG_PATH, "utf8").split("\n").filter(Boolean);
+    for (const l of lines) {
+      if (l.startsWith("#CALIB ")) {
+        try {
+          const p = JSON.parse(l.slice(7));
+          const fi = Number(p.in), fo = Number(p.out), nn = Math.max(0, Math.floor(Number(p.n) || 0));
+          if (fi > 0.01 && fi < 5 && fo > 0.01 && fo < 5) return { in: fi, out: fo, n: nn };
+        } catch (e) {}
+        break;
+      }
+    }
+  } catch (e) {}
+  return { in: CALIB_DEFAULT_IN, out: CALIB_DEFAULT_OUT, n: 0 };
+}
 function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
   const inC = Math.max(0, Number(inChars) || 0);
   const outC = Math.max(0, Number(outChars) || 0);
@@ -161,6 +179,16 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
   const outLo = Math.ceil(outC / 4);
   const outHi = Math.ceil(outC / 1.5);
   const summary = { model: String(model || GEMINI_MODEL), inLo, inHi, outLo, outHi };
+  const calibNow = readCalibFactors();
+  summary.inEst = Math.max(1, Math.round(inC * calibNow.in));
+  summary.outEst = Math.max(1, Math.round(outC * calibNow.out));
+  let calibWrite = calibNow;
+  if (Number(inTok) > 0 && Number(outTok) > 0 && inC > 20 && outC > 0) {
+    const rIn = Math.min(2, Math.max(0.05, Number(inTok) / inC));
+    const rOut = Math.min(2, Math.max(0.05, Number(outTok) / outC));
+    const w = Math.min(0.3, 1 / (calibNow.n + 1));
+    calibWrite = { in: calibNow.in * (1 - w) + rIn * w, out: calibNow.out * (1 - w) + rOut * w, n: calibNow.n + 1 };
+  }
   try {
     let totals = { all: { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0 }, byDay: {} };
     let rawLines = [];
@@ -174,9 +202,9 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
             if (parsed.byDay && typeof parsed.byDay === "object") totals.byDay = parsed.byDay;
           }
         } catch (e) {}
-        rawLines = lines.slice(1);
+        rawLines = lines.slice(1).filter(l => !l.startsWith("#"));
       } else {
-        rawLines = lines;
+        rawLines = lines.filter(l => !l.startsWith("#"));
       }
     }
     const addStats = (bucket) => {
@@ -198,6 +226,9 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
       const oldKey = dayKeys.shift();
       delete totals.byDay[oldKey];
     }
+    const _dk = new Date().toISOString().slice(0, 10);
+    const _db = (totals.byDay && totals.byDay[_dk]) || {};
+    summary.dayHi = (Number(_db.inHi) || 0) + (Number(_db.outHi) || 0);
     const entry = JSON.stringify({
       t: nowIso.slice(0, 19) + "Z",
       route: String(route || "chat"),
@@ -213,7 +244,7 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
     if (rawLines.length > 20) {
       rawLines = rawLines.slice(-20);
     }
-    const outContent = "#TOTALS " + JSON.stringify(totals) + "\n" + rawLines.join("\n") + "\n";
+    const outContent = "#TOTALS " + JSON.stringify(totals) + "\n" + "#CALIB " + JSON.stringify({ in: calibWrite.in, out: calibWrite.out, n: calibWrite.n }) + "\n" + rawLines.join("\n") + "\n";
     fs.writeFileSync(USAGE_LOG_PATH, outContent, "utf8");
   } catch (e) {}
   return summary;

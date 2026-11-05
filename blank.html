@@ -38,6 +38,7 @@
     .bubble { padding: 12px 16px; border-radius: 14px; word-break: break-word; }
     .msg.user .bubble { background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
     .msg.ai .bubble { background: #f1f5f9; color: #1e293b; border-bottom-left-radius: 4px; border: 1px solid #e2e8f0; }
+    .usage-badge { display: block; text-align: right; font-size: 10px; color: #94a3b8; margin-top: 6px; }
     
     /* 파일 다운로드 카드 */
     .file-card { margin-top: 10px; padding: 10px 14px; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -179,6 +180,7 @@
           <option value="index.html" selected>index.html</option>
         </select>
 
+        <span id="budgetBadge" hidden style="font-size:12px;font-weight:700;color:#fff;background:#f59e0b;border-radius:12px;padding:4px 10px;"></span>
         <button id="clearChatBtn" class="small-btn danger" style="margin-left:auto;" title="현재 대화방 기록 지우기">🗑️ 지우기</button>
       </div>
 
@@ -777,7 +779,7 @@
         if (m.patch) {
           appendPatchCard(m.patch, false);
         } else {
-          appendMsg(m.role, m.text, m.fileData || null, true, m.isHtml === true);
+          appendMsg(m.role, m.text, m.fileData || null, true, m.isHtml === true, m.usage);
         }
       });
       updateContextCounter();
@@ -1008,8 +1010,20 @@
       }
     });
 
+    function refreshBudgetBadge(dayHi) {
+      try {
+        const lim = Number(localStorage.getItem("gemgem-budget-daily") || "200000");
+        const el = document.getElementById("budgetBadge");
+        if (!el) return;
+        if ((Number(dayHi) || 0) >= lim) {
+          el.hidden = false;
+          el.innerText = `⚠️ 오늘 토큰 상한 초과 (${Math.round(Number(dayHi) / 1000)}k/${Math.round(lim / 1000)}k)`;
+        } else { el.hidden = true; }
+      } catch (e) {}
+    }
+
     // --- 메시지 렌더링 ---
-    function appendMsg(role, text, fileData = null, skipSave = false, isRawHtml = false) {
+    function appendMsg(role, text, fileData = null, skipSave = false, isRawHtml = false, usage = null) {
       const msgDiv = document.createElement("div");
       msgDiv.className = `msg ${role}`;
 
@@ -1031,6 +1045,15 @@
         bubble.appendChild(card);
       }
 
+      if (role === "ai" && usage && (usage.inEst != null || usage.inHi != null)) {
+        const badge = document.createElement("div");
+        badge.className = "usage-badge";
+        const iu = usage.inEst != null ? usage.inEst : usage.inHi;
+        const ou = usage.outEst != null ? usage.outEst : usage.outHi;
+        badge.innerText = `🔢 약 ${Number(iu || 0) + Number(ou || 0)} tok · ${usage.model || ""}`;
+        bubble.appendChild(badge);
+      }
+
       msgDiv.appendChild(avatar);
       msgDiv.appendChild(bubble);
       chatMessages.appendChild(msgDiv);
@@ -1038,7 +1061,7 @@
 
       if (!skipSave) {
         const room = getCurrentRoom();
-        room.messages.push({ role, text, fileData, isHtml: isRawHtml });
+        room.messages.push({ role, text, fileData, isHtml: isRawHtml, usage: usage || undefined });
         saveRoomsState();
       }
     }
@@ -1660,7 +1683,8 @@
           });
           const cd = await cr.json();
           chatLoading.remove();
-          appendMsg("ai", (cd && (cd.reply || cd.error)) || "(응답 없음)");
+          appendMsg("ai", (cd && (cd.reply || cd.error)) || "(응답 없음)", null, false, false, (cd && cd.usage) || null);
+          refreshBudgetBadge(cd && cd.usage && cd.usage.dayHi);
         } catch (e) {
           chatLoading.remove();
           appendMsg("ai", e && e.name === "AbortError" ? "사용자에 의해 요청이 중지되었습니다." : "오류 발생: " + e.message);
@@ -1700,7 +1724,8 @@
           await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 AI 응답이 아님", 1);
         } else if (d.patch.type === "question") {
           const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
-          appendMsg("ai", `❓ ${toolBadge}[의도 확인 및 답변]\n${d.patch.question}`);
+          appendMsg("ai", `❓ ${toolBadge}[의도 확인 및 답변]\n${d.patch.question}`, null, false, false, (d && d.usage) || null);
+          refreshBudgetBadge(d && d.usage && d.usage.dayHi);
         } else if (d.patch.type === "patch") {
           appendPatchCard(d.patch, true, effectiveInstruction, 0);
         }

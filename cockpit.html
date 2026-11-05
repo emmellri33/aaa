@@ -134,6 +134,7 @@
       <div class="commit-layout" style="max-width: 960px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span style="font-size: 13px; color: #94a3b8;">추정식: 하한=글자/4, 상한=글자/1.5 (모든 수치는 추정치)</span>
+          <label style="font-size:12px;color:#94a3b8;">일일 상한 <input id="budgetInput" type="number" min="1000" step="1000" style="width:110px;background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:3px 8px;" /> <button class="btn" onclick="saveBudget()">저장</button></label>
           <button class="btn" onclick="loadUsage()">🔄 새로고침</button>
         </div>
         <div id="usageSummaryGrid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
@@ -187,10 +188,21 @@
       }
       if (tabId === "usageTab") {
         document.querySelectorAll(".tab-btn")[3].classList.add("active");
+        loadBudgetInput();
         loadUsage();
       }
     }
 
+    function loadBudgetInput() { try { const el = document.getElementById("budgetInput"); if (el) el.value = localStorage.getItem("gemgem-budget-daily") || "200000"; } catch (e) {} }
+    function saveBudget() {
+      try {
+        const el = document.getElementById("budgetInput");
+        const v = Math.max(1000, Math.floor(Number(el && el.value) || 200000));
+        localStorage.setItem("gemgem-budget-daily", String(v));
+        if (el) el.value = String(v);
+        alert("✅ 일일 상한 저장: " + v);
+      } catch (e) { alert("❌ 저장 실패: " + e.message); }
+    }
     async function loadUsage() {
       const dayEl = document.getElementById("usageDayBox");
       const weekEl = document.getElementById("usageWeekBox");
@@ -213,7 +225,9 @@
         let rawLines = lines;
         if (lines[0].startsWith("#TOTALS ")) {
           try { totals = JSON.parse(lines[0].slice(8)); } catch (e) {}
-          rawLines = lines.slice(1);
+          rawLines = lines.slice(1).filter(l => !l.startsWith("#"));
+        } else {
+          rawLines = lines.filter(l => !l.startsWith("#"));
         }
         const byDay = (totals && totals.byDay) || {};
         const now = new Date();
