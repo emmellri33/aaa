@@ -181,6 +181,7 @@
         </select>
 
         <span id="budgetBadge" hidden style="font-size:12px;font-weight:700;color:#fff;background:#f59e0b;border-radius:12px;padding:4px 10px;"></span>
+        <button id="bookmarkFilterBtn" class="small-btn" title="북마크한 메시지만 보기">☆ 북마크만</button>
         <button id="clearChatBtn" class="small-btn danger" style="margin-left:auto;" title="현재 대화방 기록 지우기">🗑️ 지우기</button>
       </div>
 
@@ -192,6 +193,7 @@
 
       <!-- 입력창 (자동늘림, Enter=줄바꿈, Ctrl+Enter=보내기) -->
       <div class="input-wrapper">
+        <div id="promptChips" style="display:flex;gap:6px;padding:6px 10px 0;flex-wrap:wrap;"></div>
         <div class="input-box">
           <label class="action-btn" title="파일/이미지 첨부">
             📎
@@ -370,6 +372,7 @@
         frame.src = target + "?t=" + Date.now();
       }
       loadIndexCode();
+      saveRoomPin();
     };
 
     updateTargetPageSelect();
@@ -378,6 +381,7 @@
     if (modelSelect.querySelector('option[value="gemini-3.5-flash-lite"]')) {
       modelSelect.value = "gemini-3.5-flash-lite";
     }
+    modelSelect.onchange = () => { saveRoomPin(); };
 
     function escapeHtml(str) {
       return String(str || "")
@@ -773,13 +777,16 @@
 
     function renderCurrentRoomMessages() {
       const room = getCurrentRoom();
+      applyRoomPin(room);
       currentRoomBadge.innerText = "💬 " + room.name;
       chatMessages.innerHTML = "";
+      const onlyBmk = !!window.__bmkOnly;
       (room.messages || []).forEach(m => {
+        if (onlyBmk && !m.bookmark) return;
         if (m.patch) {
           appendPatchCard(m.patch, false);
         } else {
-          appendMsg(m.role, m.text, m.fileData || null, true, m.isHtml === true, m.usage);
+          appendMsg(m.role, m.text, m.fileData || null, true, m.isHtml === true, m.usage, { rec: m });
         }
       });
       updateContextCounter();
@@ -819,6 +826,7 @@
           moveBtn.className = "small-btn primary";
           moveBtn.innerText = isArchived ? "복원·이동" : "이동";
           moveBtn.onclick = () => {
+            saveRoomPin();
             r.archived = false;
             currentRoomId = r.id;
             saveRoomsState();
@@ -871,7 +879,9 @@
         name: (name && name.trim()) ? name.trim() : ("대화방 " + (rooms.length + 1)),
         baselineOffset: 0,
         messages: [],
-        archived: false
+        archived: false,
+        target: targetPageSelect ? targetPageSelect.value : undefined,
+        model: modelSelect ? modelSelect.value : undefined
       };
       rooms.push(newRoom);
       currentRoomId = newRoom.id;
@@ -1023,7 +1033,7 @@
     }
 
     // --- 메시지 렌더링 ---
-    function appendMsg(role, text, fileData = null, skipSave = false, isRawHtml = false, usage = null) {
+    function appendMsg(role, text, fileData = null, skipSave = false, isRawHtml = false, usage = null, x = null) {
       const msgDiv = document.createElement("div");
       msgDiv.className = `msg ${role}`;
 
@@ -1045,6 +1055,21 @@
         bubble.appendChild(card);
       }
 
+      let rec = (x && x.rec) || null;
+      const cards = (x && x.cards) || (rec && rec.files) || null;
+      if (cards && cards.length) {
+        cards.slice(0, 3).forEach(f => {
+          const card = document.createElement("div");
+          card.className = "file-card";
+          card.innerHTML = `
+            <div><strong>📄 ${escapeHtml(f.filename)}</strong><div style="font-size:11px;color:#64748b;">생성된 파일</div></div>
+            <button>📥 다운로드</button>
+          `;
+          card.querySelector("button").onclick = () => downloadFile(f.filename, encodeURIComponent(f.content));
+          bubble.appendChild(card);
+        });
+      }
+
       if (role === "ai" && usage && (usage.inEst != null || usage.inHi != null)) {
         const badge = document.createElement("div");
         badge.className = "usage-badge";
@@ -1054,6 +1079,28 @@
         bubble.appendChild(badge);
       }
 
+      if (role === "ai") {
+        const pb = document.createElement("button");
+        pb.className = "small-btn";
+        pb.style.cssText = "margin-top:6px;font-size:11px;";
+        pb.innerText = "🛠️ Complex로 승격";
+        pb.onclick = () => { chatInput.value = text; adjustTextareaHeight(); chatInput.focus(); };
+        bubble.appendChild(pb);
+      }
+
+      const star = document.createElement("button");
+      star.className = "small-btn";
+      star.style.cssText = "float:right;font-size:12px;border:none;background:transparent;cursor:pointer;";
+      star.title = "북마크";
+      star.innerText = (rec && rec.bookmark) ? "★" : "☆";
+      star.onclick = () => {
+        if (!rec) return;
+        rec.bookmark = !rec.bookmark;
+        try { saveRoomsState(); } catch {}
+        star.innerText = rec.bookmark ? "★" : "☆";
+      };
+      bubble.insertBefore(star, bubble.firstChild);
+
       msgDiv.appendChild(avatar);
       msgDiv.appendChild(bubble);
       chatMessages.appendChild(msgDiv);
@@ -1061,7 +1108,9 @@
 
       if (!skipSave) {
         const room = getCurrentRoom();
-        room.messages.push({ role, text, fileData, isHtml: isRawHtml, usage: usage || undefined });
+        if (!rec) rec = { role, text, fileData, isHtml: isRawHtml, usage: usage || undefined, bookmark: false };
+        if (cards && cards.length && !rec.files) rec.files = cards;
+        room.messages.push(rec);
         saveRoomsState();
       }
     }
@@ -1141,6 +1190,49 @@
       if (/(안\s*됐|안\s*바뀌|못\s*바꿔|왜\s*안|다시|또|아직|그대로|틀렸|아니야|안\s*돼)/.test(t)) return true;
       if (t.length <= 10) return true;
       return false;
+    }
+    function saveRoomPin() {
+      try {
+        const r = getCurrentRoom();
+        if (!r) return;
+        r.target = targetPageSelect ? targetPageSelect.value : r.target;
+        r.model = modelSelect ? modelSelect.value : r.model;
+        saveRoomsState();
+      } catch {}
+    }
+    function applyRoomPin(room) {
+      try {
+        const r = room || getCurrentRoom();
+        if (r && r.target && targetPageSelect && [...targetPageSelect.options].some(o => o.value === r.target)) targetPageSelect.value = r.target;
+        if (r && r.model && modelSelect && modelSelect.querySelector('option[value="' + r.model + '"]')) modelSelect.value = r.model;
+      } catch {}
+    }
+    function buildRecentTurns() {
+      try {
+        const room = getCurrentRoom();
+        const msgs = (room.messages || []).filter(m => !m.patch && m.text).slice(0, -1).slice(-4);
+        if (!msgs.length) return "";
+        return msgs.map(m => {
+          const t = String(m.text);
+          return (m.role === "user" ? "[user] " : "[ai] ") + t.slice(0, 500);
+        }).join("\n");
+      } catch { return ""; }
+    }
+    function extractDownloadCards(userText, replyText) {
+      try {
+        if (!/(다운로드|파일로|내려받)/.test(String(userText || ""))) return [];
+        const out = [];
+        const re = /```(\w*)\n([\s\S]*?)```/g;
+        let mm;
+        const extMap = { js: "js", html: "html", css: "css", py: "py", json: "json", md: "md", txt: "txt" };
+        while (out.length < 3 && (mm = re.exec(String(replyText || ""))) !== null) {
+          const lang = String(mm[1] || "").toLowerCase();
+          const code = String(mm[2] || "").trim().slice(0, 4000);
+          if (!code) continue;
+          out.push({ filename: "gemgem-생성파일-" + (out.length + 1) + "." + (extMap[lang] || "txt"), content: code });
+        }
+        return out;
+      } catch { return []; }
     }
     function withPrevContext(instruction) {
       if (!isVagueFollowUp(instruction) || !lastAiTurn || !lastAiTurn.patch) return instruction;
@@ -1678,12 +1770,13 @@
           const cr = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: promptPayload, pageContext: (typeof contextText !== "undefined" ? contextText.value : ""), model: modelSelect.value, roomId: currentRoomId, images: imageFiles }),
+            body: JSON.stringify({ message: promptPayload, pageContext: (typeof contextText !== "undefined" ? contextText.value : ""), model: modelSelect.value, roomId: currentRoomId, images: imageFiles, recentTurns: buildRecentTurns() }),
             signal: currentAbortController.signal
           });
           const cd = await cr.json();
           chatLoading.remove();
-          appendMsg("ai", (cd && (cd.reply || cd.error)) || "(응답 없음)", null, false, false, (cd && cd.usage) || null);
+          const dlCards = extractDownloadCards(promptPayload, (cd && cd.reply) || "");
+          appendMsg("ai", (cd && (cd.reply || cd.error)) || "(응답 없음)", null, false, false, (cd && cd.usage) || null, dlCards.length ? { cards: dlCards } : null);
           refreshBudgetBadge(cd && cd.usage && cd.usage.dayHi);
         } catch (e) {
           chatLoading.remove();
@@ -1711,7 +1804,8 @@
           instruction: effectiveInstruction,
           currentContent: contextText.value,
           model: modelSelect.value,
-          images: imageFiles
+          images: imageFiles,
+          recentTurns: buildRecentTurns()
         }, currentAbortController.signal);
         
         const d = await res.json();
@@ -1743,6 +1837,19 @@
     }
 
     sendBtn.onclick = () => handleSend(false);
+    ["다크모드 점검", "모바일 깨짐 확인", "방금 패치 원인 분석"].forEach(c => {
+      const b = document.createElement("button");
+      b.className = "small-btn";
+      b.style.cssText = "font-size:11px;";
+      b.innerText = c;
+      b.onclick = () => { chatInput.value = c; adjustTextareaHeight(); chatInput.focus(); };
+      document.getElementById("promptChips").appendChild(b);
+    });
+    document.getElementById("bookmarkFilterBtn").onclick = (e) => {
+      window.__bmkOnly = !window.__bmkOnly;
+      e.target.innerText = window.__bmkOnly ? "★ 북마크만" : "☆ 북마크만";
+      renderCurrentRoomMessages();
+    };
     renderCurrentRoomMessages();
   </script>
 </body>

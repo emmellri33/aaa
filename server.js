@@ -266,7 +266,7 @@ function buildMultimodalContents(textPrompt, images) {
 // --- 채팅 (AI 답변 생성) ---
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, pageContext, model, images, roomId } = req.body || {};
+    const { message, pageContext, model, images, roomId, recentTurns } = req.body || {};
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : GEMINI_MODEL;
     const msg = (message || '').toString().trim();
@@ -290,6 +290,7 @@ app.post('/api/chat', async (req, res) => {
 
     let finalReply = "";
     const pageBlock = pageContext ? "[현재 파일 내용]\n" + String(pageContext).slice(0, 12000) + "\n\n" : "";
+    const recentBlock = recentTurns ? "\n\n[최근 대화 (최대 4턴)]\n" + String(recentTurns).slice(0, 2000) : "";
     let totalIn = 0, totalOut = 0, lastUsage = null;
 
     for (let round = 1; round <= MAX_CHAT_ROUNDS; round++) {
@@ -301,7 +302,7 @@ app.post('/api/chat', async (req, res) => {
         "쓰기 도구(run 포함)는 허용되지 않습니다. 오직 grep과 read만 허용됩니다.",
         "마지막에는 [의도] ... 형식으로 시작하는 최종 답변을 출력하세요.",
         "",
-        memoryBlock + pageBlock + historySection,
+        memoryBlock + pageBlock + recentBlock + historySection,
         "",
         "사용자 메시지: " + msg
       ].join("\n");
@@ -842,7 +843,7 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
 
 app.post('/api/ai-modify', async (req, res) => {
   try {
-    const { instruction, target, currentContent, model, images, retryError, testToolCall, mockResponses } = req.body || {};
+    const { instruction, target, currentContent, model, images, retryError, recentTurns, testToolCall, mockResponses } = req.body || {};
     if (testToolCall) {
       const tRes = await executeReactToolCall(testToolCall);
       return res.status(tRes.status || 200).json(tRes);
@@ -881,6 +882,7 @@ app.post('/api/ai-modify', async (req, res) => {
     const failBlock = searchRelevantFailures(instruction + " " + (retryError || ""));
     const failureNote = failBlock ? "\n\n[과거 실패 일지 (failures.md) — 동일 실수 반복 금지]\n" + failBlock : "";
     const retryNote = retryError ? "\n\n[직전 패치 실패 사유 — 반드시 수정하여 재작성하세요]\n" + retryError : "";
+    const recentBlock = recentTurns ? "\n\n[최근 대화 (최대 4턴)]\n" + String(recentTurns).slice(0, 2000) : "";
 
     const ai = activeKey ? new GoogleGenAI({ apiKey: activeKey }) : null;
     const seenSignatures = new Set();
@@ -922,7 +924,7 @@ app.post('/api/ai-modify', async (req, res) => {
         ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 직전 가설을 유지하거나 같은 실패 패턴/호출을 반복하지 마시고, 새 가설 2~3개를 세운 뒤 grep/read 증거로 대조하여 즉시 patch 또는 question JSON을 출력하세요." + bannedBlock)
         : "";
 
-      const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
+      const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + recentBlock + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
 
       console.log("MODIFY round=" + round, new Date().toISOString(), "model=" + useModel, retryError ? "(retry)" : "");
 
