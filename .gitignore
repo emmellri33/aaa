@@ -2,3 +2,5 @@
 node_modules/
 snapshot-meta.json
 usage.log
+server.log
+*.bak
