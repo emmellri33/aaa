@@ -1181,6 +1181,7 @@ app.post('/api/ai-modify', async (req, res) => {
     const seenSignatures = new Set();
     const toolHistoryBlocks = [];
     const observedSummaries = [];
+    const evidenceLog = [];
     let toolRoundsUsed = 0;
     let totalToolCallsCount = 0;
     const loopStartTime = Date.now();
@@ -1334,6 +1335,7 @@ app.post('/api/ai-modify', async (req, res) => {
 
           const summaryLabel = toolName + "(" + JSON.stringify((callObj && callObj.args) || {}) + ")";
           observedSummaries.push(summaryLabel + " -> " + String(tRes.output || "").split("\n")[0].slice(0, 60));
+          evidenceLog.push({ tool: toolName, args: (callObj && callObj.args) || {}, ok: tRes.ok, resultLength: tRes.resultLength || 0 });
           roundOutputs.push("▶ " + summaryLabel + "\n" + String(tRes.output || tRes.error || "(출력 없음)"));
         }
 
