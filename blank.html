@@ -2288,7 +2288,7 @@
       }
     }
 
-    sendBtn.onclick = () => handleSend(false);
+    sendBtn.onclick = () => handleSend(codingToggleState === "ON");
     ["다크모드 점검", "모바일 깨짐 확인", "방금 패치 원인 분석"].forEach(c => {
       const b = document.createElement("button");
       b.className = "small-btn";
