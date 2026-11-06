@@ -337,13 +337,24 @@
     const chatMessages = document.getElementById("chatMessages");
     const chatInput = document.getElementById("chatInput");
     const sendBtn = document.getElementById("sendBtn");
+    let codingToggleState = "OFF";
     const complexBtn = document.createElement("button");
     complexBtn.className = "action-btn";
     complexBtn.id = "complexBtn";
-    complexBtn.title = "파이프라인 실행 (도구＋패치)";
-    complexBtn.innerText = "Complex";
+    complexBtn.style.fontSize = "12px";
+    complexBtn.style.padding = "0 8px";
+    complexBtn.style.borderRadius = "8px";
+    complexBtn.style.border = "1px solid #cbd5e1";
+    complexBtn.title = "코딩 모드 토글 (기본 OFF, 켜면 라우팅 스킵 후 무조건 패치)";
+    complexBtn.innerText = "💻 코딩 OFF";
     sendBtn.parentNode.insertBefore(complexBtn, sendBtn.nextSibling);
-    complexBtn.onclick = () => handleSend(true);
+    complexBtn.onclick = () => {
+      codingToggleState = (codingToggleState === "OFF") ? "ON" : "OFF";
+      complexBtn.innerText = (codingToggleState === "ON") ? "💻 코딩 ON" : "💻 코딩 OFF";
+      complexBtn.style.background = (codingToggleState === "ON") ? "#dbeafe" : "";
+      complexBtn.style.borderColor = (codingToggleState === "ON") ? "#2563eb" : "#cbd5e1";
+      complexBtn.style.color = (codingToggleState === "ON") ? "#1d4ed8" : "#64748b";
+    };
     const fileInput = document.getElementById("fileInput");
     const attachmentPreview = document.getElementById("attachmentPreview");
     const contextText = document.getElementById("contextText");
