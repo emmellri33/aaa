@@ -1465,11 +1465,13 @@ app.post('/api/ai-modify', async (req, res) => {
           const count = workingContent.split(ed.search).length - 1;
           
           if (count === 0) {
+            try { recordSecurityOrToolFailure("G2 원본 불일치 차단(422)", targetFile + " " + (i + 1) + "번째 조각 0회 매치", "search 재확인 후 재요청", generatePatchSignature(targetFile, ed.search)); } catch (e) {}
             let errorMsg = `[기계컷: 원본 불일치 ${i + 1}번째 조각 0회 매치] 해당 조각이 메모리상 복사본(순차 적용 중 상태)에 존재하지 않습니다. search를 100% 동일하게 맞춰주세요.`;
             if (isExcerptMode) errorMsg += "\n(발췌 모드 참고: 파일 전체를 보지 못해 생긴 오차일 수 있습니다. 도구로 정확한 위치를 다시 확인하세요.)";
             return res.status(422).json({ ok: false, error: errorMsg, patch: finalParsed, failedChunk: { target: targetFile, search: ed.search, replace: ed.replace } });
           }
           if (count >= 2) {
+            try { recordSecurityOrToolFailure("G2 다매치 차단(422)", targetFile + " " + (i + 1) + "번째 조각 " + count + "회 매치", "search 재확인 후 재요청", generatePatchSignature(targetFile, ed.search)); } catch (e) {}
             let errorMsg = `[기계컷: ${i + 1}번째 조각 ${count}회 매치 — 위아래 3줄 추가 포함해 유일하게] 해당 조각이 여러 곳에 존재합니다. 고치려는 위치가 특정되도록 search 영역을 넓혀주세요.`;
             if (isExcerptMode) {
                const firstIdx = workingContent.indexOf(ed.search);
@@ -1487,6 +1489,7 @@ app.post('/api/ai-modify', async (req, res) => {
         if (targetFile.endsWith(".html")) {
           const checkRes = verifyHtmlScriptsSyntax(workingContent);
           if (!checkRes.ok) {
+            try { recordSecurityOrToolFailure("G8 합본 문법 차단(422)", targetFile + " 합본 문법 오류", "search 재확인 후 재요청", generatePatchSignature(targetFile, rawEdits[0].search)); } catch (e) {}
             const errorMsg = `[기계컷: 합본 문법 오류 — 원인] 패치 적용 후 코드 구문 에러 발생:\n${checkRes.error}`;
             return res.status(422).json({ ok: false, error: errorMsg, patch: finalParsed, failedChunk: { target: targetFile, search: rawEdits[0].search, replace: rawEdits[0].replace } });
           }
