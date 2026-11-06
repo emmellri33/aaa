@@ -215,7 +215,7 @@ function judgeThreeSlots(instructionText, targetOverride) {
   }
 
   // 2. 위치 칸: 줄 번호, 선택자, 태그명, 함수명 등 위치 단서 확인
-  const locRegex = /(?:\d+\s*(?:행|줄|line)|#[a-zA-Z0-9_-]+|\.[a-zA-Z0-9_-]+|\b(?:title|button|btn|header|nav|footer|body|h[1-6]|input|form)\b|함수|선택자)/i;
+  const locRegex = /(?:\d+\s*(?:행|줄|line)|#[a-zA-Z0-9_-]+|\.[a-zA-Z0-9_-]+|\b(?:title|button|btn|header|nav|footer|body|h[1-6]|input|form)\b|함수|선택자|버튼)/i;
   const locationSlot = locRegex.test(text);
 
   // 3. 내용 칸: 바꿀 대상, 속성값, 색상 등 내용 단서 확인
