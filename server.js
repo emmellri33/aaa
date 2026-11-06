@@ -38,6 +38,7 @@ const FAILURES_PATH = path.join(__dirname, 'failures.md');
 const FAILURES_COLD_PATH = path.join(__dirname, 'failures-cold.md');
 const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
 const { execFile } = require('child_process');
+const crypto = require('crypto');
 
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname)));
@@ -799,16 +800,17 @@ function checkWhitespaceAndProps(searchStr, replaceStr) {
 // --- ReAct 도구 실행부 (grep / read / run) & 보안 가드 ---
 const ALLOWED_TOOL_FILES = ["index.html", "blank.html", "server.js", "failures.md", "memory.json", "package.json"];
 
-function recordSecurityOrToolFailure(what, why, how) {
+function recordSecurityOrToolFailure(what, why, how, sig = "") {
   try {
     const clean = (v) => String(v || "-").replace(/\|/g, "/").replace(/\r?\n/g, " ").trim();
     const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
     const cWhat = clean(what);
     const cWhy = clean(why);
     const cHow = clean(how);
+    const cSig = clean(sig);
 
     if (!fs.existsSync(FAILURES_PATH)) {
-      fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+      fs.writeFileSync(FAILURES_PATH, "# 실패 일지 (failures.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 | 서명 |\n|---|---|---|---|---|\n", "utf8");
     }
 
     const raw = fs.readFileSync(FAILURES_PATH, "utf8");
@@ -819,8 +821,14 @@ function recordSecurityOrToolFailure(what, why, how) {
     let pastHeader = false;
     for (const line of allLines) {
       if (!pastHeader) {
-        header += line + "\n";
-        if (line.startsWith("|---|")) {
+        let hLine = line;
+        if (hLine.startsWith("| 언제 | 뭐가 | 왜 | 어떻게 |") && !hLine.includes("서명")) {
+          hLine = "| 언제 | 뭐가 | 왜 | 어떻게 | 서명 |";
+        } else if (hLine.startsWith("|---|---|---|---|") && !hLine.includes("---|---|---|---|---")) {
+          hLine = "|---|---|---|---|---|";
+        }
+        header += hLine + "\n";
+        if (hLine.startsWith("|---|")) {
           pastHeader = true;
         }
       } else {
@@ -831,7 +839,7 @@ function recordSecurityOrToolFailure(what, why, how) {
     let found = false;
     for (let i = lines.length - 1; i >= 0; i--) {
       const cols = lines[i].split("|").map(s => s.trim());
-      if (cols.length >= 5 && cols[2] === cWhat && cols[3] === cWhy) {
+      if (cols.length >= 5 && cols[2] === cWhat && cols[3] === cWhy && (!cSig || cols[5] === cSig)) {
         let currentHow = cols[4];
         let count = 1;
         const match = currentHow.match(/(.*?)\s*×(\d+)$/);
@@ -840,14 +848,14 @@ function recordSecurityOrToolFailure(what, why, how) {
           currentHow = match[1].trim();
         }
         count++;
-        lines[i] = `| ${ts} | ${cWhat} | ${cWhy} | ${currentHow} ×${count} |`;
+        lines[i] = `| ${ts} | ${cWhat} | ${cWhy} | ${currentHow} ×${count} |${cSig ? " " + cSig + " |" : ""}`;
         found = true;
         break;
       }
     }
 
     if (!found) {
-      lines.push(`| ${ts} | ${cWhat} | ${cWhy} | ${cHow} |`);
+      lines.push(`| ${ts} | ${cWhat} | ${cWhy} | ${cHow} |${cSig ? " " + cSig + " |" : ""}`);
     }
 
     let coldLines = [];
@@ -859,11 +867,17 @@ function recordSecurityOrToolFailure(what, why, how) {
 
     if (coldLines.length > 0) {
       if (!fs.existsSync(FAILURES_COLD_PATH)) {
-        fs.writeFileSync(FAILURES_COLD_PATH, "# 실패 일지 콜드 (failures-cold.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 |\n|---|---|---|---|\n", "utf8");
+        fs.writeFileSync(FAILURES_COLD_PATH, "# 실패 일지 콜드 (failures-cold.md)\n\n| 언제 | 뭐가 | 왜 | 어떻게 | 서명 |\n|---|---|---|---|---|\n", "utf8");
       }
       fs.appendFileSync(FAILURES_COLD_PATH, coldLines.join("\n") + "\n", "utf8");
     }
   } catch (e) {}
+}
+
+function generatePatchSignature(target, search) {
+  const normSearch = String(search || "").replace(/\r?\n/g, "\n").trim();
+  const raw = String(target || "") + "\n" + normSearch;
+  return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 12);
 }
 
 function hasSensitiveKeyword(str) {
