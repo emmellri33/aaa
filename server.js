@@ -1172,6 +1172,12 @@ app.post('/api/ai-modify', async (req, res) => {
 
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : "gemini-3.5-flash-lite";
+
+    // C2 ①: 요청 진입 시 디스크 기준 해시 기록 (신규 파일이면 null)
+    const c2RoomKey = (req.body && req.body.roomId && String(req.body.roomId).trim()) || "global";
+    const c2StashKey = c2RoomKey + ":" + targetFile;
+    const initialDiskHash = getDiskFileHash(targetFile);
+    c2stash.set(c2StashKey, initialDiskHash);
     
     let htmlSource = currentContent;
     if (!htmlSource) {
