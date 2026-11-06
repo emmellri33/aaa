@@ -714,7 +714,8 @@ app.post('/api/page/:target', (req, res) => {
   if (!confirmed) {
     const rKey = (roomId && String(roomId).trim()) || "global";
     const stashKey = rKey + ":" + target;
-    const initialHash = c2stash.get(stashKey);
+    let initialHash = c2stash.get(stashKey);
+    if (initialHash === undefined) { for (const _kv of c2stash) { if (typeof _kv[0] === "string" && _kv[0].endsWith(":" + target)) { initialHash = _kv[1]; break; } } }
     if (initialHash !== undefined) {
       const currentHash = getDiskFileHash(target);
       if (initialHash !== currentHash) {
@@ -1838,7 +1839,8 @@ app.post('/api/files/write', (req, res) => {
     if (!confirmed) {
       const rKey = (roomId && String(roomId).trim()) || "global";
       const stashKey = rKey + ":" + filename;
-      const initialHash = c2stash.get(stashKey);
+      let initialHash = c2stash.get(stashKey);
+      if (initialHash === undefined) { for (const _kv of c2stash) { if (typeof _kv[0] === "string" && _kv[0].endsWith(":" + filename)) { initialHash = _kv[1]; break; } } }
       if (initialHash !== undefined) {
         const currentHash = getDiskFileHash(filename);
         if (initialHash !== currentHash) {
@@ -2020,9 +2022,17 @@ app.post('/api/git/commit', (req, res) => {
 // --- 격리 편집 라우트 (/api/cockpit/target) ---
 app.post('/api/cockpit/target', (req, res) => {
   try {
-    const { file, content } = req.body || {};
+    const { file, content, confirmed, roomId } = req.body || {};
     if (file !== "blank.html" && file !== "cockpit.html") {
       return res.status(403).json({ ok: false, error: "격리 라우트에서는 blank.html과 cockpit.html만 수정 가능합니다." });
+    if (!confirmed) {
+      const _rk = (roomId && String(roomId).trim()) || "global";
+      let _ih = c2stash.get(_rk + ":" + file);
+      if (_ih === undefined) { for (const _q of c2stash) { if (typeof _q[0] === "string" && _q[0].endsWith(":" + file)) { _ih = _q[1]; break; } } }
+      if (_ih !== undefined && _ih !== getDiskFileHash(file)) {
+        return res.status(409).json({ ok: false, error: "conflict(409): 요청 이후 파일이 변경되었습니다. 변경 내용을 확인 후 덮어쓰려면 확인을 눌러주세요.", dirty: true });
+      }
+    }
     }
     const p = path.join(__dirname, file);
     if (fs.existsSync(p)) {
