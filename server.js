@@ -967,7 +967,8 @@ app.post('/api/ai-modify', async (req, res) => {
         ? ("\n\n[현재 라운드: " + round + "/" + MAX_ROUNDS + "] 직전 가설을 유지하거나 같은 실패 패턴/호출을 반복하지 마시고, 새 가설 2~3개를 세운 뒤 grep/read 증거로 대조하여 즉시 patch 또는 question JSON을 출력하세요." + bannedBlock)
         : "";
 
-      const prompt = PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + recentBlock + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
+      const targetHeader = "[확정 작업 대상 파일: " + targetFile + "]\n(주의: 지시문이나 이전 대화의 다른 target 표기와 무관하게, 이번 작업 대상 파일은 오직 \"" + targetFile + "\" 1개로 고정됩니다. JSON 응답의 target 필드에도 반드시 \"" + targetFile + "\"을 출력하세요.)\n\n";
+      const prompt = targetHeader + PATCH_SYSTEM_PROMPT + memoryBlock + failureNote + retryNote + recentBlock + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
 
       console.log("MODIFY round=" + round, new Date().toISOString(), "model=" + useModel, retryError ? "(retry)" : "");
 

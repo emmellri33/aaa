@@ -404,6 +404,7 @@
 
     // --- A: 선택 확정 (서버 주입값 갱신) ---
     function _roomKey() { try { return (typeof currentRoomId !== "undefined" && currentRoomId) ? currentRoomId : "global"; } catch (_e) { return "global"; } }
+    window.__currentPinTarget = window.__currentPinTarget || null;
     async function refreshPinBadge() {
       try {
         const _rr = await fetch("/api/target/confirm?roomId=" + encodeURIComponent(_roomKey()));
@@ -411,13 +412,15 @@
         const _badge = document.getElementById("pinBadge");
         if (!_badge) return;
         if (_dd && _dd.ok && _dd.pin && _dd.pin.target) {
+          window.__currentPinTarget = _dd.pin.target;
           _badge.innerText = "📌 " + _dd.pin.target + " 확정됨";
           _badge.style.color = "#059669";
         } else {
+          window.__currentPinTarget = null;
           _badge.innerText = "미확정";
           _badge.style.color = "#6b7280";
         }
-      } catch {}
+      } catch { window.__currentPinTarget = null; }
     }
     try {
       const _ctb = document.getElementById("confirmTargetBtn");
@@ -764,7 +767,13 @@
     
   // C12 직접수정: 카드 target에 맞는 저장 URL (기본 index.html)
     function __patchSaveUrl(p) { const t = (p && p.target) ? p.target : "index.html"; return "/api/page/" + encodeURIComponent(t === "index.html" ? "index" : t); }
-        function __explicitTarget(text) { const m = String(text || "").match(/target\s*=\s*([\w\-.]+\.html?)/i); if (!m) return null; let f = m[1]; if (!/\.html$/i.test(f)) f += ".html"; return f; }
+    function __explicitTarget(text) { const m = String(text || "").match(/target\s*=\s*([\w\-.]+\.html?)/i); if (!m) return null; let f = m[1]; if (!/\.html$/i.test(f)) f += ".html"; return f; }
+    function resolveEffectiveTarget(rawText) {
+      if (window.__currentPinTarget) return window.__currentPinTarget;
+      const explicit = __explicitTarget(rawText);
+      if (explicit) return explicit;
+      return (typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) ? targetPageSelect.value : "index.html";
+    }
     async function loadIndexCode() {
       try {
         const target = targetPageSelect ? targetPageSelect.value : "index.html";
@@ -1548,7 +1557,7 @@
         + "\n- 지시: 위 직전 결과에 대한 수정·재확인 요청으로 간주하고, 진의 가설 2~3개(색 미반영? 변형 누락? 캐시로 본 것?)를 눈·grep 증거로 대조한 뒤 패치 또는 질문 JSON으로 답하세요. 허공 질문 금지.\n\n[사용자 이번 요청]\n" + instruction;
     }
 
-    async function requestSelfHealRetry(originalInstruction, errorReason, attempt, failedChunk) {
+    async function requestSelfHealRetry(originalInstruction, errorReason, attempt, failedChunk, trueOriginal) {
       if (attempt > 3) {
         appendMsg("ai", `❓ [자가수복 3회 실패 — 확인 질문]\n패치 적용/검증 중 다음 오류가 계속 발생했습니다:\n(${errorReason})\n어떤 부분을 우선 수정할지 구체적으로 지정해 주시겠어요?`);
         return;
@@ -1557,7 +1566,7 @@
       try {
         await loadIndexCode();
         const res = await fetchAiModifyWithRetry({
-       target: __explicitTarget(originalInstruction) || ((typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) || "index"),
+          target: resolveEffectiveTarget(trueOriginal || originalInstruction),
           instruction: originalInstruction,
           currentContent: contextText.value,
           model: modelSelect.value,
@@ -1568,10 +1577,10 @@
         if (d.ok && d.patch && d.patch.type === "patch") {
           appendPatchCard(d.patch, true, originalInstruction, attempt);
         } else {
-          await requestSelfHealRetry(originalInstruction, d.error || "유효한 패치 JSON 생성 실패", attempt + 1);
+          await requestSelfHealRetry(originalInstruction, d.error || "유효한 패치 JSON 생성 실패", attempt + 1, null, trueOriginal || originalInstruction);
         }
       } catch (e) {
-        await requestSelfHealRetry(originalInstruction, e.message, attempt + 1);
+        await requestSelfHealRetry(originalInstruction, e.message, attempt + 1, null, trueOriginal || originalInstruction);
       }
     }
 
@@ -2170,7 +2179,7 @@
       try {
         const effectiveInstruction = withPrevContext(promptPayload);
         const res = await fetchAiModifyWithRetry({
-          target: __explicitTarget(effectiveInstruction) || (targetPageSelect ? targetPageSelect.value: "index.html"),
+          target: resolveEffectiveTarget(promptPayload),
           instruction: effectiveInstruction,
           currentContent: contextText.value,
           model: resolveModel("patch"),
@@ -2185,7 +2194,7 @@
         
         if (!d.ok || !d.patch) {
           await logFailureToServer("AI 응답 생성 실패", d.error || "JSON 파싱 실패", "자가수복 재시도");
-          await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 AI 응답이 아님", 1, (d && d.patch && typeof d.patch.search === "string") ? {target: d.patch.target || null, search: d.patch.search, replace: (typeof d.patch.replace === "string" ? d.patch.replace : null)} : null);
+          await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 AI 응답이 아님", 1, (d && d.patch && typeof d.patch.search === "string") ? {target: d.patch.target || null, search: d.patch.search, replace: (typeof d.patch.replace === "string" ? d.patch.replace : null)} : null, promptPayload);
         } else if (d.patch.type === "question") {
           const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
           appendMsg("ai", `❓ ${toolBadge}[의도 확인 및 답변]\n${d.patch.question}`, null, false, false, (d && d.usage) || null);
