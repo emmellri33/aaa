@@ -216,7 +216,7 @@
     <div class="side-panel" id="rightSidePanel">
       <div class="split-card" id="sourceCard" style="display: none;">
         <div class="split-header">
-          <span>📄 index.html 소스 코드</span>
+          <span>📄 <span id="sourceTitleFile">index.html</span> 소스 코드</span>
           <button id="reloadIndexBtn" class="small-btn">새로고침</button>
         </div>
         <textarea id="contextText" readonly placeholder="불러오는 중..."></textarea>
@@ -224,7 +224,7 @@
       <div class="split-card" id="previewCard">
         <div class="split-header">
           <span style="display:flex; align-items:center; gap:6px;">
-            <span>🖥️ index.html 실시간 미리보기</span>
+            <span>🖥️ <span id="previewTitleFile">index.html</span> 실시간 미리보기</span>
             <span id="stagingBadge" style="display:none; background:#f59e0b; color:#fff; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:700;">스테이징</span>
           </span>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -532,6 +532,7 @@
     async function executeTerminalCommand(cmd) {
       const clean = String(cmd || "").trim();
       if (!clean) return;
+      try { if (typeof __termHist !== "undefined" && __termHist[__termHist.length - 1] !== clean) __termHist.push(clean); __termHistIdx = -1; } catch {}
       termInput.value = clean;
       termOutput.innerText = "$ " + clean + "\n실행 중...";
       try {
@@ -553,7 +554,6 @@
     termInput.onkeydown = (e) => {
       if (e.key === "Enter") {
         const v = termInput.value;
-        if (v.trim()) { try { __termHist.push(v); } catch {} }
         __termHistIdx = -1;
         executeTerminalCommand(v);
       } else if (e.key === "ArrowUp" && __termHist.length) {
@@ -682,7 +682,7 @@
 
     async function attachWorkspaceFile(filename) {
       try {
-        const r = await fetch("/api/files/read?name=" + encodeURIComponent(filename));
+        const r = await fetch("/api/files/read?name=" + encodeURIComponent(filename) + "&_t=" + Date.now(), { cache: "no-store" });
         const d = await r.json();
         if (!d.ok) return alert(d.error || "파일 읽기 실패");
         attachedFiles.push({ name: d.name, type: "text/plain", content: d.content, isImage: false });
@@ -768,7 +768,13 @@
     async function loadIndexCode() {
       try {
         const target = targetPageSelect ? targetPageSelect.value : "index.html";
-        const r = await fetch("/api/files/read?name=" + encodeURIComponent(target));
+        try {
+          const _sf = document.getElementById("sourceTitleFile");
+          if (_sf) _sf.innerText = target;
+          const _pf = document.getElementById("previewTitleFile");
+          if (_pf) _pf.innerText = target;
+        } catch {}
+        const r = await fetch("/api/files/read?name=" + encodeURIComponent(target) + "&_t=" + Date.now(), { cache: "no-store" });
         const d = await r.json();
         contextText.value = d.content || "";
         setStagingMode(false);
@@ -1650,6 +1656,7 @@
         armedForConfirm = false;
         applyBtn.innerText = "✅ 전 조각 일괄 적용";
         applyBtn.style.background = "#2563eb";
+        try { applyBtn.disabled = false; applyBtn.style.opacity = "1"; applyBtn.style.cursor = "pointer"; } catch {}
         if (discardBtn) discardBtn.style.display = "none";
       };
 
@@ -1669,9 +1676,9 @@
           const _lf = (!_lt || _lt === "index") ? null : _lt;
           if (_lf && _lf !== "index.html") {
             try {
-              const _lr = await fetch("/api/files/read?name=" + encodeURIComponent(_lf));
+              const _lr = await fetch("/api/files/read?name=" + encodeURIComponent(_lf) + "&_t=" + Date.now(), { cache: "no-store" });
               const _ld = await _lr.json();
-              if (_ld && _ld.ok && typeof _ld.content === "string") { contextText.value = _ld.content; setStagingMode(false); }
+              if (_ld && _ld.ok && typeof _ld.content === "string") { contextText.value = _ld.content; setStagingMode(false); try { const _sf2 = document.getElementById("sourceTitleFile"); if (_sf2) _sf2.innerText = _lf; const _pf2 = document.getElementById("previewTitleFile"); if (_pf2) _pf2.innerText = _lf; } catch {} }
             } catch (e) {}
           } else {
             await loadIndexCode();
@@ -1754,6 +1761,21 @@
           if (discardBtn) discardBtn.style.display = "inline-block";
           setStagingMode(true, working);
           window.__stagedHtml = working;
+          window.__stagingReady = false;
+          try {
+            applyBtn.disabled = true;
+            applyBtn.style.opacity = "0.5";
+            applyBtn.style.cursor = "not-allowed";
+            applyBtn.innerText = "⏳ 스테이징 준비 중…";
+            setTimeout(() => {
+              try {
+                if (window.__stagingReady !== true && armedForConfirm) {
+                  statusSpan.style.color = "#dc2626";
+                  statusSpan.innerText = "❌ 스테이징이 준비되지 않았습니다. 🗑️ 폐기 후 다시 시도해주세요";
+                }
+              } catch {}
+            }, 10000);
+          } catch {}
           statusSpan.style.color = "#2563eb";
           statusSpan.innerText = `✅ 검증 통과(${edits.length}조각, 스냅샷済 · 스테이징 렌더됨) — 확정하려면 한 번 더 누르세요`;
           try { await runEyeReport("스테이징", { reload: false }); } catch (e) { statusSpan.innerText += " (스테이징 눈 실패)"; }
@@ -1763,9 +1785,17 @@
             const _sd0 = await _sr0.json();
             window.__preShot = (_sd0 && _sd0.ok && _sd0.image) ? ("data:image/png;base64," + _sd0.image) : null;
           } catch { window.__preShot = null; }
+          window.__stagingReady = true;
+          try {
+            applyBtn.disabled = false;
+            applyBtn.style.opacity = "1";
+            applyBtn.style.cursor = "pointer";
+            applyBtn.innerText = "⚠️ 확정 적용 (다시 클릭)";
+          } catch {}
           return;
         }
         if (discardBtn) discardBtn.style.display = "none";
+        if (applyBtn.disabled) return;
 
         backupContent = current;
         window.__rtBase = Date.now();

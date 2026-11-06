@@ -180,6 +180,7 @@
       
       const pane = document.getElementById(tabId);
       if (pane) pane.classList.add("active");
+      try { sessionStorage.setItem("cockpitTab", tabId); } catch {}
 
       // 활성화된 탭 버튼 스타일
       if (tabId === "termTab") document.querySelectorAll(".tab-btn")[0].classList.add("active");
@@ -529,7 +530,7 @@
       if (deleteBtn) deleteBtn.style.display = "none";
 
       try {
-        const r = await fetch("/api/files/read?name=" + encodeURIComponent(filename));
+        const r = await fetch("/api/files/read?name=" + encodeURIComponent(filename) + "&_t=" + Date.now(), { cache: "no-store" });
         const d = await r.json();
         if (d.ok) {
           label.innerText = `📄 ${filename}`;
@@ -753,6 +754,10 @@
 
     // 초기화
     addTerminalSession();
+    try {
+      const savedTab = sessionStorage.getItem("cockpitTab");
+      if (savedTab && document.getElementById(savedTab)) switchMainTab(savedTab);
+    } catch {}
   </script>
 </body>
 </html>
