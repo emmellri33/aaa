@@ -1549,6 +1549,15 @@ app.post('/api/ai-modify', async (req, res) => {
       inTok: lastUsage?.promptTokenCount ?? null,
       outTok: lastUsage?.candidatesTokenCount ?? null
     });
+
+    // C2 ②: 카드 전송 전 비교 (question 타입은 스킵, mismatch면 dirtyBadge 추가)
+    if (finalParsed && finalParsed.type === "patch") {
+      const currentDiskHash = getDiskFileHash(finalParsed.target || targetFile);
+      if (initialDiskHash !== currentDiskHash) {
+        finalParsed.dirtyBadge = "그 사이 파일 바뀜";
+      }
+    }
+
     return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed, usage });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
