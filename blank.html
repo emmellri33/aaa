@@ -1657,7 +1657,11 @@
       }).join("");
 
       bubble.innerHTML = `
-        <div style="font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span>🛠️ 패치 제안 (${escapeHtml(patch.target ||"index.html")} · 총 ${edits.length}조각)</span>${patch.toolRounds ? `<span style="background:#dbeafe; color:#1d4ed8; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:700;">🔍 도구 ${patch.toolRounds}회</span>` : ""}</div>
+        <div style="font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span>🛠️ 패치 제안 (${escapeHtml(patch.target ||"index.html")} · 총 ${edits.length}조각)</span>
+          ${patch.toolRounds ? `<span style="background:#dbeafe; color:#1d4ed8; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:700;">🔍 도구 ${patch.toolRounds}회</span>` : ""}
+          ${patch.dirtyBadge ? `<span style="background:#fef2f2; color:#dc2626; border:1px solid #fecaca; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:700;">⚠️ ${escapeHtml(patch.dirtyBadge)}</span>` : ""}
+        </div>
         <div style="background:#f8fafc; border-left:3px solid #2563eb; padding:6px 10px; margin-bottom:8px; font-size:13px;">
           <div style="font-weight:700; color:#1e293b;">${escapeHtml(whatLine)}</div>
           <div style="color:#475569;">${escapeHtml(whyLine)}</div>
