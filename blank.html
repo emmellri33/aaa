@@ -1465,6 +1465,7 @@
 
     // --- 재시도: /api/ai-modify 전송 실패 시 최대 3회 자동 재시도 ---
     async function fetchAiModifyWithRetry(payload, signal) {
+      try { if (payload && !payload.roomId) payload.roomId = _roomKey(); } catch {}
       const body = JSON.stringify(payload);
       const attemptFetch = () => fetch("/api/ai-modify", {
         method: "POST",
