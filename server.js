@@ -883,6 +883,16 @@ app.post('/api/ai-modify', async (req, res) => {
 
     let targetFile = target;
     if (targetFile === "index") targetFile = "index.html";
+    try {
+      const _pinsA = readPins();
+      const _keyA = (req.body && req.body.roomId && String(req.body.roomId).trim()) || "global";
+      let _pinT = (_pinsA[_keyA] && _pinsA[_keyA].target) ? String(_pinsA[_keyA].target).trim() : "";
+      if (_pinT === "index") _pinT = "index.html";
+      if (_pinT && fs.existsSync(path.join(__dirname, _pinT))) {
+        targetFile = _pinT;
+        console.log("PIN target으로 강제: " + targetFile);
+      }
+    } catch {}
 
     const creator = getCreator(targetFile);
     if (targetFile !== "index.html" && creator === "user") {
@@ -1204,6 +1214,50 @@ app.post('/api/memory', (req, res) => {
     }
     fs.writeFileSync(MEMORY_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
     res.json({ ok: true, data, facts: readMemoryFacts(roomId) });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+const PINS_PATH = path.join(__dirname, "target-pins.json");
+function readPins() {
+  try {
+    if (!fs.existsSync(PINS_PATH)) return {};
+    const _d = JSON.parse(fs.readFileSync(PINS_PATH, "utf8"));
+    return (_d && typeof _d === "object") ? _d : {};
+  } catch { return {}; }
+}
+function writePins(_pins) {
+  fs.writeFileSync(PINS_PATH, JSON.stringify(_pins, null, 2) + "\n", "utf8");
+}
+app.post('/api/target/confirm', (req, res) => {
+  try {
+    const { roomId, target, model } = req.body || {};
+    const _t = String(target || "").trim();
+    if (!_t) return res.status(400).json({ ok: false, error: "target이 필요합니다." });
+    const _key = (roomId && String(roomId).trim()) || "global";
+    const _pins = readPins();
+    _pins[_key] = { target: _t, model: String(model || ""), at: new Date().toISOString() };
+    writePins(_pins);
+    res.json({ ok: true, pin: _pins[_key] });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+app.get('/api/target/confirm', (req, res) => {
+  try {
+    const _key = (req.query.roomId && String(req.query.roomId).trim()) || "global";
+    const _pins = readPins();
+    let _pin = _pins[_key] || null;
+    if (_pin && _pin.target) {
+      let _pt = String(_pin.target).trim();
+      if (_pt === "index") _pt = "index.html";
+      if (!fs.existsSync(path.join(__dirname, _pt))) {
+        try { delete _pins[_key]; writePins(_pins); } catch {}
+        _pin = null;
+      }
+    }
+    res.json({ ok: true, pin: _pin });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }

@@ -24,7 +24,7 @@
     .chat-panel { flex: 1; display: flex; flex-direction: column; background: #fff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); overflow: hidden; }
     
     /* 모델 & 대상 컨트롤러 */
-    .chat-header { padding: 12px 20px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 12px; align-items: center; background: #fafafa; }
+    .chat-header { padding: 12px 20px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 12px; row-gap: 8px; align-items: center; flex-wrap: wrap; background: #fafafa; }
     .chat-header select { padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; background: #fff; }
     
     /* 메시지 스트림 */
@@ -180,6 +180,8 @@
         <select id="targetPageSelect">
           <option value="index.html" selected>index.html</option>
         </select>
+        <button id="confirmTargetBtn" class="small-btn" title="이 페이지를 서버 주입값으로 확정">📌 확정</button>
+        <span id="pinBadge" style="font-size:12px;color:#6b7280;">미확정</span>
 
         <span id="budgetBadge" hidden style="font-size:12px;font-weight:700;color:#fff;background:#f59e0b;border-radius:12px;padding:4px 10px;"></span>
         <button id="bookmarkFilterBtn" class="small-btn" title="북마크한 메시지만 보기">☆ 북마크만</button>
@@ -400,7 +402,45 @@
 
     updateTargetPageSelect();
 
-    // 기본 모델(gemini-3.5-flash-lite) 선택
+    // --- A: 선택 확정 (서버 주입값 갱신) ---
+    function _roomKey() { try { return (typeof currentRoomId !== "undefined" && currentRoomId) ? currentRoomId : "global"; } catch (_e) { return "global"; } }
+    async function refreshPinBadge() {
+      try {
+        const _rr = await fetch("/api/target/confirm?roomId=" + encodeURIComponent(_roomKey()));
+        const _dd = await _rr.json();
+        const _badge = document.getElementById("pinBadge");
+        if (!_badge) return;
+        if (_dd && _dd.ok && _dd.pin && _dd.pin.target) {
+          _badge.innerText = "📌 " + _dd.pin.target + " 확정됨";
+          _badge.style.color = "#059669";
+        } else {
+          _badge.innerText = "미확정";
+          _badge.style.color = "#6b7280";
+        }
+      } catch {}
+    }
+    try {
+      const _ctb = document.getElementById("confirmTargetBtn");
+      if (_ctb) {
+        _ctb.onclick = async () => {
+          try {
+            const _r = await fetch("/api/target/confirm", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ roomId: _roomKey(), target: (typeof targetPageSelect !== "undefined" && targetPageSelect ? targetPageSelect.value : "index.html"), model: (typeof modelSelect !== "undefined" && modelSelect ? modelSelect.value : "") })
+            });
+            const _d = await _r.json();
+            if (_d && _d.ok) { try { saveRoomPin(); } catch {} }
+            else { const _b2 = document.getElementById("pinBadge"); if (_b2) { _b2.innerText = "확정 실패"; _b2.style.color = "#dc2626"; } }
+          } catch (_e) {
+            const _b3 = document.getElementById("pinBadge");
+            if (_b3) { _b3.innerText = "확정 실패"; _b3.style.color = "#dc2626"; }
+          }
+          refreshPinBadge();
+        };
+      }
+    } catch {}
+    try { refreshPinBadge(); } catch {}
     if (modelSelect.querySelector('option[value="gemini-3.5-flash-lite"]')) {
       modelSelect.value = "gemini-3.5-flash-lite";
     }
@@ -1446,6 +1486,7 @@
         if (r && r.target && targetPageSelect && [...targetPageSelect.options].some(o => o.value === r.target)) targetPageSelect.value = r.target;
         if (r && r.model && modelSelect && modelSelect.querySelector('option[value="' + r.model + '"]')) modelSelect.value = r.model;
       } catch {}
+      try { refreshPinBadge(); } catch {}
     }
     function buildRecentTurns() {
       try {
