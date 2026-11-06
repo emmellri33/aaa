@@ -762,6 +762,18 @@ function extractJsonString(raw) {
   return txt;
 }
 
+function verifyHtmlScriptsSyntax(text) {
+  if (!text.includes("<html") && !text.includes("</html>") && !text.includes("<script")) return { ok: true };
+  const re = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+  let m; let idx = 0; const errors = [];
+  while ((m = re.exec(text)) !== null) {
+    idx++;
+    try { new Function(m[1]); } catch (e) { errors.push("script #" + idx + ": " + e.message); }
+  }
+  if (errors.length) return { ok: false, error: errors.join("\n") };
+  return { ok: true, blocks: idx };
+}
+
 function checkWhitespaceAndProps(searchStr, replaceStr) {
   const sLines = String(searchStr).split("\n");
   const rLines = String(replaceStr).split("\n");
