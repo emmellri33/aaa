@@ -296,8 +296,8 @@
       <div class="modal-body">
         <div id="cmpNote" style="font-size:12px;color:#64748b;">스냅샷이 없습니다. 패치를 1건 진행하면 전/후가 저장됩니다.</div>
         <div style="display:flex;gap:8px;">
-          <div style="flex:1;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">적용 전</div><img id="cmpImgPre" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;" /></div>
-          <div style="flex:1;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">적용 후</div><img id="cmpImgPost" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;" /></div>
+          <div style="flex:1;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">적용 전</div><img id="cmpImgPre" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;cursor:zoom-in;" onclick="zoomShot(this)" title="클릭하면 크게 보기" /></div>
+          <div style="flex:1;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">적용 후</div><img id="cmpImgPost" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;cursor:zoom-in;" onclick="zoomShot(this)" title="클릭하면 크게 보기" /></div>
         </div>
       </div>
     </div>
@@ -996,6 +996,22 @@
         if (post) { post.src = hasPost ? window.__postShot : ""; post.style.display = hasPost ? "block" : "none"; }
         if (note) note.style.display = (hasPre && hasPost) ? "none" : "block";
         document.getElementById("shotModal").classList.add("open");
+      } catch {}
+    }
+    function zoomShot(img) {
+      try {
+        if (!img || !img.src) return;
+        let ov = document.getElementById("shotZoomOv");
+        if (ov) { ov.remove(); return; }
+        ov = document.createElement("div");
+        ov.id = "shotZoomOv";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,0.9);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:24px;";
+        const big = document.createElement("img");
+        big.src = img.src;
+        big.style.cssText = "max-width:100%;max-height:100%;border-radius:8px;background:#fff;";
+        ov.appendChild(big);
+        ov.onclick = () => { try { ov.remove(); } catch {} };
+        document.body.appendChild(ov);
       } catch {}
     }
 
@@ -1871,7 +1887,7 @@
           if (!rollbackReason) {
             try {
               const _tp = (typeof _ptF !== "undefined" && _ptF && _ptF !== "index") ? _ptF : null;
-              const targetPage = _tp ? _tp : (targetPageSelect ? targetPageSelect.value : "index.html");              const shotRes = await fetch(`/api/observe-shot?target=${encodeURIComponent(targetPage)}`);
+              const targetPage = _tp ? _tp : (targetPageSelect ? targetPageSelect.value : "index.html");              const shotRes = await fetch(`/api/observe-shot?target=${encodeURIComponent(targetPage)}&fresh=1`);
               const shotData = await shotRes.json();
               window.__postShot = (shotData && shotData.ok && shotData.image) ? ("data:image/png;base64," + shotData.image) : null;
               if (shotData.ok && shotData.image) {

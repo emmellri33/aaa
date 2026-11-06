@@ -1762,7 +1762,7 @@ app.get('/api/observe-shot', (req, res) => {
     if (fs.existsSync(shotPath)) {
       const stat = fs.statSync(shotPath);
       const ageMs = Date.now() - stat.mtime.getTime();
-      if (ageMs < 60000) {
+      if (ageMs < 60000 && req.query.fresh !== "1") {
         return returnImage();
       }
     }
