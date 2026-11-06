@@ -1803,14 +1803,9 @@ app.post('/api/check', (req, res) => {
       return;
     }
     if (filename.endsWith(".html")) {
-      const re = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
-      let m; let idx = 0; const errors = [];
-      while ((m = re.exec(text)) !== null) {
-        idx++;
-        try { new Function(m[1]); } catch (e) { errors.push("script #" + idx + ": " + e.message); }
-      }
-      if (errors.length) return res.json({ ok: false, file: filename, error: errors.join("\n").slice(0, 2000) });
-      return res.json({ ok: true, file: filename, blocks: idx });
+      const checkRes = verifyHtmlScriptsSyntax(text);
+      if (!checkRes.ok) return res.json({ ok: false, file: filename, error: checkRes.error.slice(0, 2000) });
+      return res.json({ ok: true, file: filename, blocks: checkRes.blocks });
     }
     return res.json({ ok: true, file: filename });
   } catch (e) {
