@@ -585,12 +585,20 @@
           body = { file: currentSelectedFile, content };
         }
 
-        const r = await fetch(endpoint, {
+        let r = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body)
         });
-        const d = await r.json();
+        let d = await r.json();
+        if (r.status === 409 && d && d.dirty) {
+          if (confirm("요청 이후 파일이 변경되었습니다. 현재 편집 내용으로 덮어쓰시겠습니까?")) {
+            body.confirmed = true;
+            const r2 = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+            const d2 = await r2.json();
+            r = r2; d = d2;
+          }
+        }
         if (d.ok) {
           editorOriginal = content;
           editorDirty = false;
