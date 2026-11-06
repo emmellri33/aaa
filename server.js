@@ -112,6 +112,208 @@ function searchRelevantFailures(queryText) {
   }
 }
 
+// --- EYES 분할2: 스켈레톤 추출기 (정규식 기반 id, 함수명, 주요 class / 상한 20줄) ---
+function extractSkeletonMap(sourceText) {
+  try {
+    const text = String(sourceText || "");
+    if (!text.trim()) return "(스켈레톤 없음: 빈 파일)";
+    const lines = [];
+
+    // id 추출
+    const ids = [];
+    const idRegex = /\bid=["']([a-zA-Z0-9_-]+)["']/g;
+    let m;
+    while ((m = idRegex.exec(text)) !== null) {
+      if (!ids.includes(m[1])) ids.push(m[1]);
+      if (ids.length >= 8) break;
+    }
+    if (ids.length > 0) lines.push("- id: #" + ids.join(", #"));
+
+    // 함수명 추출 (function foo, const foo = () =>, function* foo)
+    const funcs = [];
+    const fnRegex = /(?:function\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>)/g;
+    while ((m = fnRegex.exec(text)) !== null) {
+      const fnName = m[1] || m[2];
+      if (fnName && !funcs.includes(fnName)) funcs.push(fnName);
+      if (funcs.length >= 8) break;
+    }
+    if (funcs.length > 0) lines.push("- 함수: " + funcs.join("(), ") + "()");
+
+    // 주요 class 추출 (class="...")
+    const classes = [];
+    const clsRegex = /\bclass=["']([^"']+)["']/g;
+    while ((m = clsRegex.exec(text)) !== null) {
+      const clsTokens = m[1].split(/\s+/).filter(Boolean);
+      for (const c of clsTokens) {
+        if (!classes.includes(c) && !["dark", "active", "open", "hidden"].includes(c)) classes.push(c);
+        if (classes.length >= 10) break;
+      }
+      if (classes.length >= 10) break;
+    }
+    if (classes.length > 0) lines.push("- class: ." + classes.join(", ."));
+
+    // 태그/헤딩 구조 요약
+    const tags = [];
+    const tagRegex = /<(h[1-3]|header|nav|main|aside|footer|article|section)\b[^>]*>/gi;
+    while ((m = tagRegex.exec(text)) !== null) {
+      const tg = m[1].toLowerCase();
+      if (!tags.includes(tg)) tags.push(tg);
+      if (tags.length >= 6) break;
+    }
+    if (tags.length > 0) lines.push("- 주요 태그: <" + tags.join(">, <") + ">");
+
+    return lines.slice(0, 20).join("\n") || "(스켈레톤 추출 요소 없음)";
+  } catch (e) {
+    return "(스켈레톤 추출 오류: " + e.message + ")";
+  }
+}
+
+// 파일명 판정: 풀네임 일치 또는 유일 부분일치 판정 (ambiguous면 matching 배열 반환)
+function resolveTargetFileName(rawName) {
+  try {
+    const raw = String(rawName || "").trim();
+    if (!raw) return { status: "empty" };
+    const entries = fs.readdirSync(__dirname, { withFileTypes: true })
+      .filter(e => e.isFile() && !isForbiddenFileName(e.name))
+      .map(e => e.name);
+
+    if (entries.includes(raw)) return { status: "exact", file: raw };
+
+    const withHtml = raw.endsWith(".html") ? raw : (raw + ".html");
+    if (entries.includes(withHtml)) return { status: "exact", file: withHtml };
+
+    const matched = entries.filter(f => f.toLowerCase().includes(raw.toLowerCase()));
+    if (matched.length === 1) return { status: "unique_partial", file: matched[0] };
+    if (matched.length > 1) return { status: "ambiguous", matches: matched };
+    return { status: "none" };
+  } catch (e) {
+    return { status: "error", error: e.message };
+  }
+}
+
+// 기억 제목 요약 목록 (앞 5자~40자 제목만)
+function getMemoryHeadersSummary(roomId) {
+  try {
+    const facts = readMemoryFacts(roomId);
+    if (!facts || !facts.length) return "기억 없음";
+    return facts.map((f, i) => `${i + 1}. ${String(f).slice(0, 40)}`).join("\n");
+  } catch (e) { return "(기억 읽기 실패)"; }
+}
+
+// 실패 일지 제목 요약 목록 (언제/뭐가 컬럼만)
+function getFailuresHeadersSummary() {
+  try {
+    if (!fs.existsSync(FAILURES_PATH)) return "실패 일지 없음";
+    const rawHot = fs.readFileSync(FAILURES_PATH, "utf8");
+    const lines = rawHot.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
+    return lines.slice(-5).map(l => {
+      const cols = l.split("|").map(c => c.trim());
+      return `- [${cols[1] || "-"}] ${cols[2] || "-"}`;
+    }).join("\n") || "실패 일지 없음";
+  } catch (e) { return "(실패 일지 요약 실패)"; }
+}
+
+// --- EYES 분할2: 스켈레톤 추출기 (정규식 기반 id, 함수명, 주요 class / 상한 20줄) ---
+function extractSkeletonMap(sourceText) {
+  try {
+    const text = String(sourceText || "");
+    if (!text.trim()) return "(스켈레톤 없음: 빈 파일)";
+    const lines = [];
+
+    // id 추출
+    const ids = [];
+    const idRegex = /\bid=["']([a-zA-Z0-9_-]+)["']/g;
+    let m;
+    while ((m = idRegex.exec(text)) !== null) {
+      if (!ids.includes(m[1])) ids.push(m[1]);
+      if (ids.length >= 8) break;
+    }
+    if (ids.length > 0) lines.push("- id: #" + ids.join(", #"));
+
+    // 함수명 추출 (function foo, const foo = () =>, function* foo)
+    const funcs = [];
+    const fnRegex = /(?:function\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>)/g;
+    while ((m = fnRegex.exec(text)) !== null) {
+      const fnName = m[1] || m[2];
+      if (fnName && !funcs.includes(fnName)) funcs.push(fnName);
+      if (funcs.length >= 8) break;
+    }
+    if (funcs.length > 0) lines.push("- 함수: " + funcs.join("(), ") + "()");
+
+    // 주요 class 추출 (class="...")
+    const classes = [];
+    const clsRegex = /\bclass=["']([^"']+)["']/g;
+    while ((m = clsRegex.exec(text)) !== null) {
+      const clsTokens = m[1].split(/\s+/).filter(Boolean);
+      for (const c of clsTokens) {
+        if (!classes.includes(c) && !["dark", "active", "open", "hidden"].includes(c)) classes.push(c);
+        if (classes.length >= 10) break;
+      }
+      if (classes.length >= 10) break;
+    }
+    if (classes.length > 0) lines.push("- class: ." + classes.join(", ."));
+
+    // 태그/헤딩 구조 요약
+    const tags = [];
+    const tagRegex = /<(h[1-3]|header|nav|main|aside|footer|article|section)\b[^>]*>/gi;
+    while ((m = tagRegex.exec(text)) !== null) {
+      const tg = m[1].toLowerCase();
+      if (!tags.includes(tg)) tags.push(tg);
+      if (tags.length >= 6) break;
+    }
+    if (tags.length > 0) lines.push("- 주요 태그: <" + tags.join(">, <") + ">");
+
+    return lines.slice(0, 20).join("\n") || "(스켈레톤 추출 요소 없음)";
+  } catch (e) {
+    return "(스켈레톤 추출 오류: " + e.message + ")";
+  }
+}
+
+// 파일명 판정: 풀네임 일치 또는 유일 부분일치 판정 (ambiguous면 matching 배열 반환)
+function resolveTargetFileName(rawName) {
+  try {
+    const raw = String(rawName || "").trim();
+    if (!raw) return { status: "empty" };
+    const entries = fs.readdirSync(__dirname, { withFileTypes: true })
+      .filter(e => e.isFile() && !isForbiddenFileName(e.name))
+      .map(e => e.name);
+
+    if (entries.includes(raw)) return { status: "exact", file: raw };
+
+    const withHtml = raw.endsWith(".html") ? raw : (raw + ".html");
+    if (entries.includes(withHtml)) return { status: "exact", file: withHtml };
+
+    const matched = entries.filter(f => f.toLowerCase().includes(raw.toLowerCase()));
+    if (matched.length === 1) return { status: "unique_partial", file: matched[0] };
+    if (matched.length > 1) return { status: "ambiguous", matches: matched };
+    return { status: "none" };
+  } catch (e) {
+    return { status: "error", error: e.message };
+  }
+}
+
+// 기억 제목 요약 목록 (앞 5자~40자 제목만)
+function getMemoryHeadersSummary(roomId) {
+  try {
+    const facts = readMemoryFacts(roomId);
+    if (!facts || !facts.length) return "기억 없음";
+    return facts.map((f, i) => `${i + 1}. ${String(f).slice(0, 40)}`).join("\n");
+  } catch (e) { return "(기억 읽기 실패)"; }
+}
+
+// 실패 일지 제목 요약 목록 (언제/뭐가 컬럼만)
+function getFailuresHeadersSummary() {
+  try {
+    if (!fs.existsSync(FAILURES_PATH)) return "실패 일지 없음";
+    const rawHot = fs.readFileSync(FAILURES_PATH, "utf8");
+    const lines = rawHot.split("\n").filter(l => l.startsWith("|") && !l.includes("|---") && !l.includes("| 언제 |"));
+    return lines.slice(-5).map(l => {
+      const cols = l.split("|").map(c => c.trim());
+      return `- [${cols[1] || "-"}] ${cols[2] || "-"}`;
+    }).join("\n") || "실패 일지 없음";
+  } catch (e) { return "(실패 일지 요약 실패)"; }
+}
+
 function extractRelevantHtmlSnippet(html, queryText) {
   const full = String(html || "");
   if (!full) return "(코드 비어 있음)";
@@ -833,7 +1035,7 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
     };
   }
 
-  // 3. read: { file, start, end } (1회 최대 200줄)
+  // 3. read: { file, start, end } (1회 최대 200줄, 범위 지정 필수, full-read 금지 및 로그)
   if (tool === "read") {
     const targetFile = String(args.file || "").trim();
     if (!targetFile || hasSensitiveKeyword(targetFile) || !isAllowedToolFile(targetFile)) {
@@ -845,10 +1047,30 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
     if (!fs.existsSync(fullPath)) {
       return { ok: false, status: 404, error: "파일이 존재하지 않습니다: " + targetFile };
     }
+
+    const hasStart = (args.start !== undefined && args.start !== null && String(args.start).trim() !== "");
+    const hasEnd = (args.end !== undefined && args.end !== null && String(args.end).trim() !== "");
+    if (!hasStart && !hasEnd) {
+      recordSecurityOrToolFailure("read 범위 미지정(full-read) 차단", "file=" + targetFile, "start/end 범위 지정 필수");
+      console.warn("[FULL-READ LOG] 범위 없는 read 차단됨: file=" + targetFile);
+      return {
+        ok: false,
+        status: 400,
+        error: "거부됨(400): read 도구는 start와 end 범위를 반드시 지정해야 합니다 (통째 반환 금지). 여러 번 나누어 필요한 구간만 조회하세요."
+      };
+    }
+
     const lines = fs.readFileSync(fullPath, "utf8").split("\n");
     const startLine = Math.max(1, parseInt(args.start, 10) || 1);
     const rawEnd = parseInt(args.end, 10) || (startLine + 199);
     const endLine = Math.min(lines.length, Math.min(startLine + 199, Math.max(startLine, rawEnd)));
+
+    // 전체 파일을 통째로 읽으려는 시도 감지 및 기록
+    if (startLine === 1 && endLine >= lines.length && lines.length > 50) {
+      console.warn("[FULL-READ LOG] 전체 줄 범위 읽기 감지: file=" + targetFile + " lines=" + lines.length);
+      recordSecurityOrToolFailure("full-read 감지 로그", "file=" + targetFile + " (" + lines.length + "줄)", "분할 read 권장");
+    }
+
     const slice = lines.slice(startLine - 1, endLine).map((l, i) => (startLine + i) + ": " + l).join("\n");
     const out = "[" + targetFile + " " + startLine + "~" + endLine + "줄]\n" + slice;
     return {
