@@ -1485,7 +1485,7 @@
         + "\n- 지시: 위 직전 결과에 대한 수정·재확인 요청으로 간주하고, 진의 가설 2~3개(색 미반영? 변형 누락? 캐시로 본 것?)를 눈·grep 증거로 대조한 뒤 패치 또는 질문 JSON으로 답하세요. 허공 질문 금지.\n\n[사용자 이번 요청]\n" + instruction;
     }
 
-    async function requestSelfHealRetry(originalInstruction, errorReason, attempt) {
+    async function requestSelfHealRetry(originalInstruction, errorReason, attempt, failedChunk) {
       if (attempt > 3) {
         appendMsg("ai", `❓ [자가수복 3회 실패 — 확인 질문]\n패치 적용/검증 중 다음 오류가 계속 발생했습니다:\n(${errorReason})\n어떤 부분을 우선 수정할지 구체적으로 지정해 주시겠어요?`);
         return;
@@ -1498,7 +1498,8 @@
           instruction: originalInstruction,
           currentContent: contextText.value,
           model: modelSelect.value,
-          retryError: errorReason
+          retryError: errorReason,
+          failedChunk: (typeof failedChunk !== "undefined" && failedChunk) || null
         });
         const d = await res.json();
         if (d.ok && d.patch && d.patch.type === "patch") {
@@ -1678,7 +1679,7 @@
             statusSpan.style.color = "#dc2626";
             statusSpan.innerText = "❌ " + errMsg;
             await logFailureToServer("다조각 원자적 매치 실패", errMsg, "전 조각 원본 재확인 후 자가수복 재요청");
-            await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1);
+            await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1, {target: ((typeof patch !== "undefined" && patch && patch.target) || null), search: ed.search, replace: ed.replace});
             return;
           }
           const wsCheck = verifyClientEditIntegrity(ed.search, ed.replace);
@@ -1688,7 +1689,7 @@
             statusSpan.style.color = "#dc2626";
             statusSpan.innerText = "❌ " + errMsg;
             await logFailureToServer("다조각 공백 검증 실패", errMsg, "공백 및 기존 속성 유지하여 재요청");
-            await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1);
+            await requestSelfHealRetry(originalInstruction || whatLine, errMsg, healAttempt + 1, {target: ((typeof patch !== "undefined" && patch && patch.target) || null), search: ed.search, replace: ed.replace});
             return;
           }
           working = working.replace(ed.search, () => ed.replace);
@@ -1700,7 +1701,7 @@
           statusSpan.style.color = "#dc2626";
           statusSpan.innerText = "❌ 검증 실패: " + check.reason + " (전체 미적용)";
           await logFailureToServer("패치 후 HTML/JS 검증 실패", check.reason, "문법 오류 수정 자가수복 재요청");
-          await requestSelfHealRetry(originalInstruction || whatLine, check.reason, healAttempt + 1);
+          await requestSelfHealRetry(originalInstruction || whatLine, check.reason, healAttempt + 1, (edits.length === 1 && edits[0]) ? {target: ((typeof patch !== "undefined" && patch && patch.target) || null), search: edits[0].search, replace: edits[0].replace} : null);
           return;
         }
 
@@ -1865,7 +1866,7 @@
           statusSpan.style.color = "#dc2626";
           statusSpan.innerText = "❌ 저장 실패: " + saveErr;
           await logFailureToServer("index.html 저장 실패", saveErr, "서버 검증 통과하도록 재요청");
-          await requestSelfHealRetry(originalInstruction || whatLine, saveErr, healAttempt + 1);
+          await requestSelfHealRetry(originalInstruction || whatLine, saveErr, healAttempt + 1, (typeof patch !== "undefined" && patch && patch.target && edits && edits.length === 1 && edits[0]) ? {target: patch.target, search: edits[0].search, replace: edits[0].replace} : null);
         }
       };
 
@@ -2097,7 +2098,7 @@
         
         if (!d.ok || !d.patch) {
           await logFailureToServer("AI 응답 생성 실패", d.error || "JSON 파싱 실패", "자가수복 재시도");
-          await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 AI 응답이 아님", 1);
+          await requestSelfHealRetry(effectiveInstruction, d.error || "유효한 AI 응답이 아님", 1, (d && d.patch && typeof d.patch.search === "string") ? {target: d.patch.target || null, search: d.patch.search, replace: (typeof d.patch.replace === "string" ? d.patch.replace : null)} : null);
         } else if (d.patch.type === "question") {
           const toolBadge = d.patch.toolRounds ? `[🔍 도구 ${d.patch.toolRounds}회] ` : "";
           appendMsg("ai", `❓ ${toolBadge}[의도 확인 및 답변]\n${d.patch.question}`, null, false, false, (d && d.usage) || null);

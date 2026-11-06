@@ -874,7 +874,7 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
 
 app.post('/api/ai-modify', async (req, res) => {
   try {
-    const { instruction, target, currentContent, model, images, retryError, recentTurns, testToolCall, mockResponses } = req.body || {};
+    const { instruction, target, currentContent, model, images, retryError, recentTurns, testToolCall, mockResponses, failedChunk } = req.body || {};
     if (testToolCall) {
       const tRes = await executeReactToolCall(testToolCall);
       return res.status(tRes.status || 200).json(tRes);
@@ -912,7 +912,9 @@ app.post('/api/ai-modify', async (req, res) => {
     const memoryBlock = facts.length > 0 ? "\n\n[공유 기억 (memory.json)]\n- " + facts.join("\n- ") : "";
     const failBlock = searchRelevantFailures(instruction + " " + (retryError || ""));
     const failureNote = failBlock ? "\n\n[과거 실패 일지 (failures.md) — 동일 실수 반복 금지]\n" + failBlock : "";
-    const retryNote = retryError ? "\n\n[직전 패치 실패 사유 — 반드시 수정하여 재작성하세요]\n" + retryError : "";
+    const failedChunkBody = failedChunk || null;
+    const failedChunkBlock = (failedChunkBody && typeof failedChunkBody.search === "string") ? "\n\n[실패 조각 — 아래 search/replace 그대로 재제출 금지, 반드시 다른 가설로]\n[target: " + String(failedChunkBody.target || "") + "]\n[search]\n" + String(failedChunkBody.search).slice(0, 2000) + "\n[replace]\n" + String(failedChunkBody.replace || "").slice(0, 2000) : "";
+    const retryNote = retryError ? ("\n\n[직전 패치 실패 사유 — 반드시 수정하여 재작성하세요]\n" + retryError + failedChunkBlock) : (failedChunkBlock || "");
     const recentBlock = recentTurns ? "\n\n[최근 대화 (최대 4턴)]\n" + String(recentTurns).slice(0, 2000) : "";
 
     const ai = activeKey ? new GoogleGenAI({ apiKey: activeKey }) : null;
@@ -1091,6 +1093,17 @@ app.post('/api/ai-modify', async (req, res) => {
       finalParsed.edits = rawEdits;
       finalParsed.search = rawEdits[0].search;
       finalParsed.replace = rawEdits[0].replace;
+      if (failedChunkBody && typeof failedChunkBody.search === "string") {
+        const _fcT = String(failedChunkBody.target || "") === "index" ? "index.html" : String(failedChunkBody.target || "");
+        const _curT = String(finalParsed.target || targetFile);
+        if (_fcT && _curT === _fcT) {
+          for (let _fi = 0; _fi < rawEdits.length; _fi++) {
+            if (rawEdits[_fi].search === failedChunkBody.search) {
+              return res.status(422).json({ ok: false, error: "거부됨(422): [동일 조각 재제출 금지] " + (_fi + 1) + "번째 조각이 실패 조각과 동일합니다. 다른 가설로 다시 작성하세요.", patch: finalParsed });
+            }
+          }
+        }
+      }
 
       const exp = String(finalParsed.explanation || "").trim();
       if (!exp.includes("[뭘]") || !exp.includes("[왜]")) {
