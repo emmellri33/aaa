@@ -707,8 +707,25 @@ app.post('/api/page/:target', (req, res) => {
   if (target !== "index.html" && getCreator(target) === "user") {
     return res.status(403).json({ error: 'forbidden: 사용자 소유 파일은 덮어쓸 수 없습니다.' });
   }
-  
-  const { content } = req.body || {};
+
+  const { content, confirmed, roomId } = req.body || {};
+
+  // C2 적용 재확인: confirmed가 아닐 때 stash 대조 후 mismatch면 409
+  if (!confirmed) {
+    const rKey = (roomId && String(roomId).trim()) || "global";
+    const stashKey = rKey + ":" + target;
+    const initialHash = c2stash.get(stashKey);
+    if (initialHash !== undefined) {
+      const currentHash = getDiskFileHash(target);
+      if (initialHash !== currentHash) {
+        return res.status(409).json({
+          ok: false,
+          error: "conflict(409): 요청 이후 파일이 변경되었습니다. 변경 내용을 확인 후 덮어쓰려면 확인을 눌러주세요.",
+          dirty: true
+        });
+      }
+    }
+  }
   if (typeof content !== 'string') return res.status(400).json({ error: 'content required' });
   if (target.endsWith('.html') && (!content.includes('<html') || !content.includes('</html>'))) {
     return res.status(400).json({ error: 'invalid html: <html>...</html> 구조가 필요합니다.' });
@@ -1600,6 +1617,20 @@ app.post('/api/memory', (req, res) => {
     res.status(400).json({ ok: false, error: e.message });
   }
 });
+
+// --- EYES 분할5: C2 더티 핑거프린트 stash (roomId + target 키 map) ---
+const c2stash = new Map();
+
+function getDiskFileHash(filename) {
+  try {
+    const fullPath = path.join(__dirname, filename);
+    if (!fs.existsSync(fullPath)) return null;
+    const raw = fs.readFileSync(fullPath, 'utf8');
+    return crypto.createHash('sha1').update(raw).digest('hex');
+  } catch (e) {
+    return null;
+  }
+}
 
 const PINS_PATH = path.join(__dirname, "target-pins.json");
 function readPins() {
