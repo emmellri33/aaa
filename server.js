@@ -984,9 +984,9 @@ function runAllowedCommandAsync(rawCmd) {
       const combined = (String(stdout || "") + (stderr ? "\n" + String(stderr) : "")).trim();
       const truncated = combined.length > 2000 ? combined.slice(0, 2000) + "\n...(2000자 절단됨)" : combined;
       if (err && err.code !== 1) {
-        return resolve({ ok: false, status: 200, output: (truncated || err.message).slice(0, 2000) });
+        return resolve({ ok: false, status: 200, output: (truncated || err.message).slice(0, 2000), resultLength: combined.length });
       }
-      resolve({ ok: true, status: 200, output: truncated || "(출력 없음)" });
+      resolve({ ok: true, status: 200, output: truncated || "(출력 없음)", resultLength: combined.length });
     });
   });
 }
@@ -1057,7 +1057,8 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
       ok: true,
       status: 200,
       tool,
-      output: out.length > 2000 ? out.slice(0, 2000) + "\n...(2000자 절단됨)" : out
+      output: out.length > 2000 ? out.slice(0, 2000) + "\n...(2000자 절단됨)" : out,
+      resultLength: hits.length
     };
   }
 
@@ -1103,7 +1104,8 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
       ok: true,
       status: 200,
       tool,
-      output: out.length > 2000 ? out.slice(0, 2000) + "\n...(2000자 절단됨)" : out
+      output: out.length > 2000 ? out.slice(0, 2000) + "\n...(2000자 절단됨)" : out,
+      resultLength: slice.length > 0 ? 1 : 0
     };
   }
 
