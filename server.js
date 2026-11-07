@@ -45,6 +45,7 @@ const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
 const SESSION_PATH = path.join(__dirname, 'session.md');
 const SESSION_DETAIL_DIR = path.join(__dirname, 'session-detail');
+const SESSION_TOKEN_CAP = 8000;
 const FAILURES_PATH = path.join(__dirname, 'failures.md');
 const FAILURES_COLD_PATH = path.join(__dirname, 'failures-cold.md');
 const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
@@ -1935,11 +1936,26 @@ app.post('/api/session', (req, res) => {
     return '\n' + lines.join('\n') + '\n';
   });
 
+  // --- SESSION 분할2: 저장 직후 상한 검사 및 아카이브 자동 이동 ---
+  let archiveReview = null;
+  try {
+    let postContent = readSessionFile();
+    const capRes = processSessionCap(postContent);
+    if (capRes.archiveReview) {
+      fs.writeFileSync(SESSION_PATH, capRes.newContent, 'utf8');
+      archiveReview = capRes.archiveReview;
+      console.log(`SESSION pipe: 상한 초과 방어 (${archiveReview.moved.length}개 완료 줄 아카이브 이동)`);
+    }
+  } catch (capErr) {
+    console.error("SESSION pipe: 상한 헬퍼 실행 오류", capErr.message);
+  }
+
   res.json({
     ok: true,
     line: newLine,
     ...(warning ? { warning } : {}),
-    ...(detailFile ? { detailFile } : {})
+    ...(detailFile ? { detailFile } : {}),
+    ...(archiveReview ? { archiveReview } : {})
   });
 });
 
@@ -2066,6 +2082,55 @@ function updateRoomSection(fullContent, roomId, updateFn) {
   const updatedContent = content.slice(0, headerIdx + header.length) + newSecBody + rest;
   fs.writeFileSync(SESSION_PATH, updatedContent, 'utf8');
   return updatedContent;
+}
+
+// --- SESSION 분할2: 상한(8000) 검사 및 ## 아카이브 자동 이동 헬퍼 ---
+function processSessionCap(fullContent) {
+  let archiveReview = null;
+  const archiveHeader = '## 아카이브';
+  
+  if (!fullContent.includes(archiveHeader)) {
+    fullContent += '\n\n' + archiveHeader + '\n';
+  }
+  
+  const headerIdx = fullContent.indexOf(archiveHeader);
+  let hotSection = fullContent.slice(0, headerIdx);
+  let archiveSection = fullContent.slice(headerIdx);
+  
+  const calib = readCalibFactors();
+  const calibIn = calib.in || 0.25;
+  
+  let estTokens = Math.max(1, Math.round(hotSection.length * calibIn));
+  let movedLines = [];
+  
+  if (estTokens > SESSION_TOKEN_CAP) {
+    let hotLines = hotSection.split('\n');
+    let i = hotLines.length - 1; 
+    
+    // 오래된(아래쪽) [완료] 줄부터 탐색하여 아카이브로 이동
+    while (i >= 0 && estTokens > SESSION_TOKEN_CAP) {
+      // 줄 문법 정규식: # [태그] (날짜) [완료]: ...
+      if (hotLines[i].match(/^#\s+\[.*?\]\s+\(\d{4}-\d{2}-\d{2}\)\s+\[완료\]:/)) {
+        movedLines.push(hotLines[i]);
+        hotLines.splice(i, 1);
+        hotSection = hotLines.join('\n');
+        estTokens = Math.max(1, Math.round(hotSection.length * calibIn));
+      }
+      i--;
+    }
+    
+    if (movedLines.length > 0) {
+      archiveSection = archiveHeader + '\n' + movedLines.join('\n') + '\n' + archiveSection.slice(archiveHeader.length).trimStart();
+      fullContent = hotSection.trimEnd() + '\n\n' + archiveSection;
+      
+      archiveReview = {
+        moved: movedLines,
+        instruction: "유지/이동 지정 (요약·압축 금지)"
+      };
+    }
+  }
+  
+  return { newContent: fullContent, archiveReview };
 }
 
 // --- EYES 분할5: C2 더티 핑거프린트 stash (roomId + target 키 map) ---
@@ -2207,6 +2272,45 @@ app.delete('/api/memory', (req, res) => {
       }
     } else if (roomId && roomId !== "global") {
       delete data.rooms[roomId];
+
+      // --- SESSION 분할2: 방 삭제 시 해당 방 세션 기록 아카이브 보존 훅 ---
+      try {
+        const cleanRoomId = sanitizeSessionRoomId(roomId);
+        if (cleanRoomId) {
+          let fullContent = readSessionFile();
+          const targetHeader = `## 방 ${cleanRoomId}`;
+          if (fullContent.includes(targetHeader)) {
+            const secBody = getRoomSection(fullContent, cleanRoomId);
+            
+            // 본문에서 방 섹션 전체 삭제
+            let headerIdx = fullContent.indexOf(targetHeader);
+            let nextSecIdx = fullContent.indexOf('\n## 방 ', headerIdx + targetHeader.length);
+            let before = fullContent.slice(0, headerIdx);
+            let after = nextSecIdx === -1 ? '' : fullContent.slice(nextSecIdx);
+            
+            let modContent = (before.trimEnd() + '\n\n' + after.trimStart()).trim();
+
+            // 아카이브 구역에 보존 (삭제 방 섹션 통째로 편입)
+            const archiveHeader = '## 아카이브';
+            if (!modContent.includes(archiveHeader)) {
+              modContent += '\n\n' + archiveHeader + '\n';
+            }
+            
+            let archIdx = modContent.indexOf(archiveHeader);
+            let hotSec = modContent.slice(0, archIdx);
+            let archSec = modContent.slice(archIdx);
+            
+            const preservedSection = `\n${targetHeader} (삭제됨)\n${secBody}\n`;
+            archSec = archiveHeader + '\n' + preservedSection + archSec.slice(archiveHeader.length).trimStart();
+            
+            fs.writeFileSync(SESSION_PATH, hotSec.trimEnd() + '\n\n' + archSec, 'utf8');
+            console.log(`SESSION pipe: 삭제된 방(${cleanRoomId}) 세션 아카이브로 보존 완료`);
+          }
+        }
+      } catch (preserveErr) {
+        console.error("SESSION pipe: 방 보존 훅 실패", preserveErr.message);
+      }
+      
     } else {
       data.global = [];
     }
