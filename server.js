@@ -1119,6 +1119,9 @@ app.post('/api/ai-modify', async (req, res) => {
     }
     if (!instruction || !target) return res.status(400).json({ error: 'instruction and target required' });
 
+    // --- DIET 분할2: 우회 허용 플래그 (함수 스코프 — patch 게이트와 공용 성공 return에서 참조) ---
+    const bypassActive = instruction.includes("알고 있어, 그래도 해");
+
     let targetFile = target;
     if (targetFile === "index") targetFile = "index.html";
     try {
@@ -1577,8 +1580,7 @@ app.post('/api/ai-modify', async (req, res) => {
       finalParsed.search = rawEdits[0].search;
       finalParsed.replace = rawEdits[0].replace;
       if (failedChunkBody && typeof failedChunkBody.search === "string") {
-        const bypassBlock = instruction.includes("알고 있어, 그래도 해");
-        if (!bypassBlock) {
+        if (!bypassActive) {
           const _fcT = String(failedChunkBody.target || "") === "index" ? "index.html" : String(failedChunkBody.target || "");
           const _curT = String(finalParsed.target || targetFile);
           if (_fcT && _curT === _fcT) {
@@ -1592,10 +1594,9 @@ app.post('/api/ai-modify', async (req, res) => {
       }
 
       // --- EYES 분할4: G3(증거), G5(가설 대조), G4(서명 차단) ---
-      const bypassG2G8 = instruction.includes("알고 있어, 그래도 해");
       const isExcerptModeForGates = htmlSource && htmlSource.split("\n").length > 60;
-      
-      if (!bypassG2G8) {
+
+      if (!bypassActive) {
         // G3: 증거 게이트 (발췌 모드인데 도구 로그 0건이면 차단. 질 검증 포함)
         if (isExcerptModeForGates) {
           const validEvidence = evidenceLog.some(e => e.ok && (e.resultLength > 0 || (e.args && String(e.args.pattern || "").includes("없음"))));
@@ -1632,7 +1633,7 @@ app.post('/api/ai-modify', async (req, res) => {
       // -------------------------------------------------------------------------
 
       // --- EYES 분할3: G2(존재 게이트 엄격판) & G8(합본 문법 게이트) & G6(먹이 첨부 재요청 유도) ---
-      if (!bypassG2G8) {
+      if (!bypassActive) {
         let workingContent = htmlSource;
         const isExcerptMode = htmlSource && htmlSource.split("\n").length > 60;
 
@@ -1673,10 +1674,22 @@ app.post('/api/ai-modify', async (req, res) => {
       }
       // ----------------------------------------------------------------------------------------------------
 
+      // --- DIET 분할2: A4 본문 자동조립 (스코프 밖 workingContent 사용 없음, htmlSource 기준) ---
       const exp = String(finalParsed.explanation || "").trim();
       if (!exp.includes("[뭘]") || !exp.includes("[왜]")) {
-        const lines = exp.split("\n").filter(Boolean);
-      finalParsed.explanation = "[뭘] [추측] " + (lines[0] || "요청하신 코드 조각 수정") + "\n[왜] [추측] 근거 없음 — 원본 대조 없이 생성됨";
+        const ranges = rawEdits.map(ed => {
+          const idx = htmlSource.indexOf(ed.search);
+          if (idx === -1) return "미확인";
+          const startLine = htmlSource.slice(0, idx).split("\n").length;
+          const editLines = ed.search.split("\n").length;
+          const endLine = startLine + editLines - 1;
+          return startLine === endLine ? `${startLine}` : `${startLine}~${endLine}`;
+        });
+        const flags = [];
+        if (exp.includes("[추측]")) flags.push("[추측]");
+        if (exp.includes("[위험]")) flags.push("[위험]");
+        const flagSuffix = flags.length > 0 ? " " + flags.join(" ") : "";
+        finalParsed.explanation = "[뭘] " + (finalParsed.target || targetFile) + " " + rawEdits.length + "조각 / [왜] " + ranges.join(", ") + "행 매치" + flagSuffix;
       }
     } else if (finalParsed.type === "question") {
       if (typeof finalParsed.question !== "string") {
@@ -1711,7 +1724,7 @@ app.post('/api/ai-modify', async (req, res) => {
       }
     }
 
-    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed, usage });
+    return res.json({ ok: true, result: JSON.stringify(finalParsed), patch: finalParsed, toolRounds: toolRoundsUsed, usage, ...(bypassActive ? { notice: "지시대로 수행" } : {}) });
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
     let friendly = '서버 오류가 발생했습니다. [' + msg.slice(0, 200) + ']';
