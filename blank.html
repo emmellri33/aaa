@@ -144,6 +144,7 @@
         <button class="menu-item" id="menuRunSnapshot"><span>📸 스냅샷 (Commit & Push)</span><span>실행</span></button>
         <button class="menu-item" id="menuOpenRooms"><span>💬 대화 목록 관리</span><span>열기</span></button>
         <button class="menu-item" id="menuOpenCockpit" onclick="window.open('/cockpit.html', '_blank')"><span>🛠️ 콕핏 열기 (격리 수리)</span><span>열기</span></button>
+        <button class="menu-item" id="menuRestartServer"><span>🔄 서버 재시작</span><span>실행</span></button>
         <div class="menu-divider"></div>
         <div class="menu-key-box">
           <label style="font-size:11px; font-weight:700; color:#475569;">🔑 Gemini API 키 (서버 메모리 등록)</label>
@@ -626,6 +627,29 @@
       } catch (e) {
         appendMsg("ai", "❌ 스냅샷 오류: " + e.message);
       }
+    };
+
+    // --- S2. 서버 재시작 (/api/restart) ---
+    document.getElementById("menuRestartServer").onclick = async () => {
+      moreMenu.classList.remove("open");
+      if (!confirm("서버를 재시작할까요?")) return;
+      appendMsg("ai", "⏳ 서버 종료됨, 재시작 대기 중...", null, true);
+      try {
+        const r = await fetch("/api/restart", { method: "POST" });
+        const d = await r.json();
+        if (!d.ok) { appendMsg("ai", "❌ 재시작 요청 실패", null, true); return; }
+      } catch (e) {
+        appendMsg("ai", "❌ 재시작 요청 오류: " + e.message, null, true);
+        return;
+      }
+      for (let i = 0; i < 60; i++) {
+        await new Promise((rr) => setTimeout(rr, 2000));
+        try {
+          const h = await fetch("/health");
+          if (h.ok) { appendMsg("ai", "✅ 서버 복구됨", null, true); return; }
+        } catch (e2) {}
+      }
+      appendMsg("ai", "⚠️ 서버가 아직 안 떴습니다. 터미널에서 직접 재시작해 주세요.", null, true);
     };
 
     // --- 5, 7, 16. 파일 목록 & memory.json & failures.md 모달 ---
@@ -1390,14 +1414,7 @@
         bubble.appendChild(badge);
       }
 
-      if (role === "ai") {
-        const pb = document.createElement("button");
-        pb.className = "small-btn";
-        pb.style.cssText = "margin-top:6px;font-size:11px;";
-        pb.innerText = "🛠️ Complex로 승격";
-        pb.onclick = () => { chatInput.value = text; adjustTextareaHeight(); chatInput.focus(); };
-        bubble.appendChild(pb);
-      }
+
 
       const star = document.createElement("button");
       star.className = "small-btn";
