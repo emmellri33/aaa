@@ -822,9 +822,9 @@
     function __patchSaveUrl(p) { const t = (p && p.target) ? p.target : "index.html"; return "/api/page/" + encodeURIComponent(t === "index.html" ? "index" : t); }
     function __explicitTarget(text) { const m = String(text || "").match(/target\s*=\s*([\w\-.]+\.html?)/i); if (!m) return null; let f = m[1]; if (!/\.html$/i.test(f)) f += ".html"; return f; }
     function resolveEffectiveTarget(rawText) {
-      if (window.__currentPinTarget) return window.__currentPinTarget;
       const explicit = __explicitTarget(rawText);
       if (explicit) return explicit;
+      if (window.__currentPinTarget) return window.__currentPinTarget;
       return (typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) ? targetPageSelect.value : "index.html";
     }
     async function loadIndexCode() {
@@ -1569,7 +1569,7 @@
         const res = await fetchAiModifyWithRetry({
           target: resolveEffectiveTarget(trueOriginal || originalInstruction),
           instruction: originalInstruction,
-          currentContent: contextText.value,
+          uiTarget: (typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) ? targetPageSelect.value : "index.html",
           model: modelSelect.value,
           retryError: errorReason,
           failedChunk: (typeof failedChunk !== "undefined" && failedChunk) || null
@@ -2181,7 +2181,7 @@
         const res = await fetchAiModifyWithRetry({
           target: resolveEffectiveTarget(promptPayload),
           instruction: effectiveInstruction,
-          currentContent: contextText.value,
+          uiTarget: (typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) ? targetPageSelect.value : "index.html",
           model: resolveModel("patch"),
           images: imageFiles,
           recentTurns: buildRecentTurns(),
@@ -2204,7 +2204,8 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 message: promptPayload,
-                pageContext: (typeof contextText !== "undefined" ? contextText.value : ""),
+                target: resolveEffectiveTarget(promptPayload),
+                uiTarget: (typeof targetPageSelect !== "undefined" && targetPageSelect && targetPageSelect.value) ? targetPageSelect.value : "index.html",
                 model: resolveModel("chat"),
                 roomId: currentRoomId,
                 images: imageFiles,
