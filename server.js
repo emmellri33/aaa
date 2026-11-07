@@ -459,7 +459,7 @@ function buildMultimodalContents(textPrompt, images) {
 // --- 채팅 (AI 답변 생성) ---
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, pageContext, model, images, roomId, recentTurns } = req.body || {};
+    const { message, pageContext, target, uiTarget, model, images, roomId, recentTurns } = req.body || {};
     const ALLOWED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-4-argon"];
     const useModel = ALLOWED_MODELS.includes(model) ? model : GEMINI_MODEL;
     const msg = (message || '').toString().trim();
@@ -482,7 +482,49 @@ app.post('/api/chat', async (req, res) => {
     const MAX_CHAT_ROUNDS = 5;
 
     let finalReply = "";
-    const pageBlock = pageContext ? "[현재 파일 내용]\n" + String(pageContext).slice(0, 12000) + "\n\n" : "";
+
+    // --- TODO-24: /api/chat 디스크 독점 읽기 (우선순위: 명시 target= > 방 PIN > uiTarget > target > index.html) ---
+    let chatTargetFile = null;
+    const chatMsgText = (message || '').toString();
+    const chatTargetMatch = chatMsgText.match(/(?:target\s*=\s*|file\s*=\s*)([a-zA-Z0-9_.-]+)/i);
+    if (chatTargetMatch) {
+      const resF = resolveTargetFileName(chatTargetMatch[1]);
+      if (resF.status === "exact" || resF.status === "unique_partial") {
+        chatTargetFile = resF.file;
+      }
+    }
+    if (!chatTargetFile) {
+      try {
+        const _pins = readPins();
+        const _rKey = (roomId && String(roomId).trim()) || "global";
+        let _pT = (_pins[_rKey] && _pins[_rKey].target) ? String(_pins[_rKey].target).trim() : "";
+        if (_pT === "index") _pT = "index.html";
+        if (_pT && fs.existsSync(path.join(__dirname, _pT))) {
+          chatTargetFile = _pT;
+        }
+      } catch {}
+    }
+    if (!chatTargetFile && uiTarget) {
+      let _uT = String(uiTarget).trim();
+      if (_uT === "index") _uT = "index.html";
+      if (_uT && fs.existsSync(path.join(__dirname, _uT))) {
+        chatTargetFile = _uT;
+      }
+    }
+    if (!chatTargetFile && target) {
+      let _tT = String(target).trim();
+      if (_tT === "index") _tT = "index.html";
+      if (_tT && fs.existsSync(path.join(__dirname, _tT))) {
+        chatTargetFile = _tT;
+      }
+    }
+    if (!chatTargetFile) {
+      chatTargetFile = "index.html";
+    }
+
+    const chatPath = path.join(__dirname, chatTargetFile);
+    const diskText = fs.existsSync(chatPath) ? fs.readFileSync(chatPath, "utf8") : "";
+    const pageBlock = diskText ? ("[현재 파일 내용 (" + chatTargetFile + ")]\n" + diskText.slice(0, 12000) + "\n\n") : "";
     const recentBlock = recentTurns ? "\n\n[최근 대화 (최대 4턴)]\n" + String(recentTurns).slice(0, 2000) : "";
     let totalIn = 0, totalOut = 0, lastUsage = null;
 
