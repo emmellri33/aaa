@@ -142,7 +142,7 @@ if (content.split(searchRb).length !== 2) {
 content = content.replace(searchRb, replaceRb);
 
 // blank.html 인라인 <script> 전 블록 검사
-const re = /<script\\b[^>]*>([\\s\\S]*?)<\\/script>/gi;
+const re = /<script\\b[^>]*>([\\s\\S]*?)<\/script>/gi;
 let m, sIdx = 0;
 while ((m = re.exec(content)) !== null) {
   sIdx++;
