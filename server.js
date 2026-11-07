@@ -1447,7 +1447,7 @@ app.post('/api/ai-modify', async (req, res) => {
       const assembledPrompt = PATCH_SYSTEM_PROMPT + "\n[현재 라우터 판정]\n" + routerDecisionLog + "\n\n[적용 설명서(b팩)]\n" + appliedBPack;
       const prompt = targetHeader + assembledPrompt + memoryBlock + failureNote + retryNote + recentBlock + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
 
-      console.log("MODIFY round=" + round, new Date().toISOString(), "model=" + useModel, retryError ? "(retry)" : "");
+      console.log("MODIFY round=" + round, new Date().toISOString(), "model=" + useModel, "baseChars=" + PATCH_SYSTEM_PROMPT.length, retryError ? "(retry)" : "");
 
       let rawText = "";
       if (Array.isArray(mockResponses) && mockResponses.length >= round) {
