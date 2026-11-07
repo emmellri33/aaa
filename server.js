@@ -1174,7 +1174,7 @@ async function executeReactToolCall(call, seenSignatures = new Set(), strictRepe
 
 app.post('/api/ai-modify', async (req, res) => {
   try {
-    const { instruction, target, currentContent, model, images, retryError, recentTurns, testToolCall, mockResponses, failedChunk } = req.body || {};
+    const { instruction, target, uiTarget, currentContent, model, images, retryError, recentTurns, testToolCall, mockResponses, failedChunk } = req.body || {};
     if (testToolCall) {
       const tRes = await executeReactToolCall(testToolCall);
       return res.status(tRes.status || 200).json(tRes);
@@ -1184,18 +1184,70 @@ app.post('/api/ai-modify', async (req, res) => {
     // --- DIET 분할2: 우회 허용 플래그 (함수 스코프 — patch 게이트와 공용 성공 return에서 참조) ---
     const bypassActive = instruction.includes("알고 있어, 그래도 해");
 
-    let targetFile = target;
-    if (targetFile === "index") targetFile = "index.html";
+    // --- ROUTER 분할4 & TODO-24: signalText 추출 ---
+    let instText = String(instruction || "").trim();
+    const tailMarker = "[사용자 이번 요청]";
+    const tailIdx = instText.lastIndexOf(tailMarker);
+    const signalText = (tailIdx >= 0 ? instText.slice(tailIdx + tailMarker.length) : instText).trim();
+    if (signalText === "대기열 승인 편입") {
+      const approveRes = applyApprovedPendingCases();
+      const doneMsg = approveRes.ok
+        ? "✅ 대기열 " + approveRes.count + "건이 router-cases.md에 안전하게 편입되었습니다."
+        : "대기열 편입 중단: " + approveRes.error;
+      const doneCard = { type: "question", question: doneMsg };
+      return res.json({ ok: true, result: JSON.stringify(doneCard), patch: doneCard, toolRounds: 0 });
+    }
+
+    // --- TODO-24: 타겟 확정 순서 (1순위: 명시 target= > 2순위: 방 PIN > 3순위: uiTarget > 4순위: target) ---
+    let explicitTarget = null;
+    const explicitMatch = signalText.match(/(?:target\s*=\s*|file\s*=\s*)([a-zA-Z0-9_.-]+)/i) || instText.match(/(?:target\s*=\s*|file\s*=\s*)([a-zA-Z0-9_.-]+)/i);
+    if (explicitMatch) {
+      const resF = resolveTargetFileName(explicitMatch[1]);
+      if (resF.status === "exact" || resF.status === "unique_partial") {
+        explicitTarget = resF.file;
+      }
+    }
+
+    const roomKey = (req.body && req.body.roomId && String(req.body.roomId).trim()) || "global";
+    let _pinT = "";
     try {
-      const _pinsA = readPins();
-      const _keyA = (req.body && req.body.roomId && String(req.body.roomId).trim()) || "global";
-      let _pinT = (_pinsA[_keyA] && _pinsA[_keyA].target) ? String(_pinsA[_keyA].target).trim() : "";
+      const _pins = readPins();
+      _pinT = (_pins[roomKey] && _pins[roomKey].target) ? String(_pins[roomKey].target).trim() : "";
       if (_pinT === "index") _pinT = "index.html";
-      if (_pinT && fs.existsSync(path.join(__dirname, _pinT))) {
-        targetFile = _pinT;
-        console.log("PIN target으로 강제: " + targetFile);
+      if (!fs.existsSync(path.join(__dirname, _pinT))) {
+        _pinT = "";
       }
     } catch {}
+
+    let cleanUiTarget = "";
+    if (uiTarget && typeof uiTarget === "string") {
+      cleanUiTarget = uiTarget.trim();
+      if (cleanUiTarget === "index") cleanUiTarget = "index.html";
+      if (!fs.existsSync(path.join(__dirname, cleanUiTarget))) {
+        cleanUiTarget = "";
+      }
+    }
+
+    // --- TODO-24: PIN ≠ uiTarget mismatch 질문 카드 (명시 target= 없고 재시도 아닐 때) ---
+    if (!explicitTarget && !retryError && _pinT && cleanUiTarget && _pinT !== cleanUiTarget) {
+      const mismatchCard = {
+        type: "question",
+        question: "📌 현재 핀은 " + _pinT + "인데 화면은 " + cleanUiTarget + "를 보고 계십니다. 어느 파일을 고칠까요?",
+        options: [
+          { label: "📌 핀 파일 (" + _pinT + ") 고치기", instruction: "target=" + _pinT + " " + signalText },
+          { label: "🖥️ 화면 파일 (" + cleanUiTarget + ") 고치기", instruction: "target=" + cleanUiTarget + " " + signalText }
+        ]
+      };
+      return res.json({ ok: true, result: JSON.stringify(mismatchCard), patch: mismatchCard, toolRounds: 0 });
+    }
+
+    let fallbackTarget = String(target || "").trim();
+    if (fallbackTarget === "index") fallbackTarget = "index.html";
+
+    const targetFile = explicitTarget || _pinT || cleanUiTarget || fallbackTarget || "index.html";
+    if (_pinT && targetFile === _pinT) {
+      console.log("PIN target으로 강제: " + targetFile);
+    }
 
     const creator = getCreator(targetFile);
     if (targetFile !== "index.html" && creator === "user") {
@@ -1210,25 +1262,10 @@ app.post('/api/ai-modify', async (req, res) => {
     const useModel = ALLOWED_MODELS.includes(model) ? model : "gemini-3.5-flash-lite";
 
     // C2 ①: 요청 진입 시 디스크 기준 해시 기록 (신규 파일이면 null)
-    const c2RoomKey = (req.body && req.body.roomId && String(req.body.roomId).trim()) || "global";
+    const c2RoomKey = roomKey;
     const c2StashKey = c2RoomKey + ":" + targetFile;
     const initialDiskHash = getDiskFileHash(targetFile);
     c2stash.set(c2StashKey, initialDiskHash);
-
-    // --- ROUTER 분할4: 인간 승인 트리거 ("대기열 승인 편입") 처리 ---
-    // blank withPrevContext가 지시문 앞에 메타를 붙이므로 tail 추출 후 매칭 (exact 매칭 보호)
-    let instText = String(instruction || "").trim();
-    const tailMarker = "[사용자 이번 요청]";
-    const tailIdx = instText.lastIndexOf(tailMarker);
-    const signalText = (tailIdx >= 0 ? instText.slice(tailIdx + tailMarker.length) : instText).trim();
-    if (signalText === "대기열 승인 편입") {
-      const approveRes = applyApprovedPendingCases();
-      const doneMsg = approveRes.ok
-        ? "✅ 대기열 " + approveRes.count + "건이 router-cases.md에 안전하게 편입되었습니다."
-        : "대기열 편입 중단: " + approveRes.error;
-      const doneCard = { type: "question", question: doneMsg };
-      return res.json({ ok: true, result: JSON.stringify(doneCard), patch: doneCard, toolRounds: 0 });
-    }
 
     // --- ROUTER 분할4: 신호 감지 (사용자 정정, 유사 재질문) ---
     const detectedSignals = [];
