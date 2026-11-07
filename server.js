@@ -2122,7 +2122,15 @@ app.post('/api/failures', (req, res) => {
 function isForbiddenFileName(name) {
   const n = String(name || "");
   const low = n.toLowerCase();
-  if (!n || n.includes("..") || n.includes("/") || n.includes("\\")) return true;
+  if (!n || n.includes("..") || n.includes("\\")) return true;
+  if (n === "session.md" || n === "session-detail" || n === "session-detail/") return true;
+  // 상세 파일 읽기 허용: session-detail/ 하위 파일 (추가 슬래시 없음)
+  if (n.startsWith("session-detail/")) {
+    const sub = n.slice("session-detail/".length);
+    if (!sub || sub.includes("/") || sub.includes("..")) return true;
+    return false;
+  }
+  if (n.includes("/")) return true;
   if (n.startsWith(".") || low.includes(".env") || low.includes("key") || n === "node_modules") return true;
   return false;
 }
