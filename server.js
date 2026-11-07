@@ -699,8 +699,6 @@ app.post('/api/page/:target', (req, res) => {
   });
 });
 
-const USER_PROFILE_HEADER = "사용자는 비개발자. 한글로 답한다. 터미널 명령은 한 번에 한 블록씩, 붙여넣기 전 커밋이 원칙. 겹쳐 붙이지 않는다.";
-
 // --- ROUTER 분할3: b팩 3종 확정 (DIET §2 안) ---
 const BPACK_PATCH = [
   "- 패치 모드: 패치 외 말 금지. 출력은 JSON 1개만 (코드블록·잡담 금지). (F2-역할 + F3 조건부 — 코딩 ON일 때만 적용)",
@@ -741,11 +739,7 @@ const BPACK_LIGHT = [
 // [이사] F7 판단 조항 → 삭제 대상 없음 (ROUTER3 확인済 — "없음" 명기)
 // [이사] base에 조항 없음: F4 타겟(C0 서버 주입) · F5 0회/2회+(G2 코드) · F5 발췌무증거(G3 코드) · F5 서명재탕(G4 코드) · F5 합본문법(G8 코드) · F5 서버컷 최우선반영(이벤트 동봉) · F6 우회 허용통지 · F8 모드(해체) · B1 언제묻나(라우터 코드)
 
-const PATCH_SYSTEM_PROMPT = [
-  USER_PROFILE_HEADER,
-  "",
-  "1. 추측이면 [추측], 위험이면 [위험] 표시. (깃발: A4/F7/A5)"
-].join("\n");
+const PATCH_SYSTEM_PROMPT = ["1. 추측이면 [추측], 위험이면 [위험] 표시. (깃발: A4/F7/A5)"].join("\n");
 
 function extractJsonString(raw) {
   const txt = String(raw || "").trim();
@@ -2298,7 +2292,7 @@ app.post('/api/run', async (req, res) => {
       return res.status(400).json({ ok: false, error: "질문을 입력하세요." });
     }
     try {
-      const askPrompt = USER_PROFILE_HEADER + "\n\n[질문]\n" + question;
+      const askPrompt = "[질문]\n" + question;
       const activeKey = getActiveKey();
       if (!activeKey) {
         const demoReply = '(AI 키 미설정) 데모 응답: "' + question + '"';
