@@ -43,6 +43,8 @@ const ROUTER_LITE_PROMPT = `요청 1개를 다음 3개 중 하나로 분류하�
 
 const INDEX_PATH = path.join(__dirname, 'index.html');
 const MEMORY_PATH = path.join(__dirname, 'memory.json');
+const SESSION_PATH = path.join(__dirname, 'session.md');
+const SESSION_DETAIL_DIR = path.join(__dirname, 'session-detail');
 const FAILURES_PATH = path.join(__dirname, 'failures.md');
 const FAILURES_COLD_PATH = path.join(__dirname, 'failures-cold.md');
 const MANIFEST_PATH = path.join(__dirname, 'manifest.json');
