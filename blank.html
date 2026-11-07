@@ -348,12 +348,45 @@
     complexBtn.title = "코딩 모드 토글 (기본 OFF, 켜면 라우팅 스킵 후 무조건 패치)";
     complexBtn.innerText = "💻 코딩 OFF";
     sendBtn.parentNode.insertBefore(complexBtn, sendBtn.nextSibling);
-    complexBtn.onclick = () => {
-      codingToggleState = (codingToggleState === "OFF") ? "ON" : "OFF";
+    function applyCodingToggleUI(state) {
+      codingToggleState = state === "ON" ? "ON" : "OFF";
       complexBtn.innerText = (codingToggleState === "ON") ? "💻 코딩 ON" : "💻 코딩 OFF";
       complexBtn.style.background = (codingToggleState === "ON") ? "#dbeafe" : "";
       complexBtn.style.borderColor = (codingToggleState === "ON") ? "#2563eb" : "#cbd5e1";
       complexBtn.style.color = (codingToggleState === "ON") ? "#1d4ed8" : "#64748b";
+    }
+
+    async function saveRoomCodingToggle(roomId, state) {
+      if (!roomId) return;
+      try {
+        await fetch("/api/memory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId, codingToggle: state })
+        });
+      } catch {}
+    }
+
+    async function restoreRoomCodingToggle(roomId) {
+      if (!roomId) return;
+      try {
+        const r = await fetch("/api/memory?roomId=" + encodeURIComponent(roomId));
+        const d = await r.json();
+        if (d.ok && d.data && d.data.rooms && Array.isArray(d.data.rooms[roomId])) {
+          const item = d.data.rooms[roomId].find(x => String(x).startsWith("__codingToggle:"));
+          if (item) {
+            applyCodingToggleUI(item.split(":")[1]);
+            return;
+          }
+        }
+      } catch {}
+      applyCodingToggleUI("OFF");
+    }
+
+    complexBtn.onclick = () => {
+      const nextState = (codingToggleState === "OFF") ? "ON" : "OFF";
+      applyCodingToggleUI(nextState);
+      saveRoomCodingToggle(currentRoomId, nextState);
     };
     const fileInput = document.getElementById("fileInput");
     const attachmentPreview = document.getElementById("attachmentPreview");
@@ -631,8 +664,20 @@
           listEl.appendChild(row);
         });
 
-        memEl.value = mData.content || JSON.stringify({ facts: [] }, null, 2);
-        try { renderMemoryChips(mData.content); } catch {}
+        let cleanContent = mData.content;
+        try {
+          const parsedData = JSON.parse(mData.content || "{}");
+          if (parsedData.rooms && typeof parsedData.rooms === "object") {
+            for (const k of Object.keys(parsedData.rooms)) {
+              if (Array.isArray(parsedData.rooms[k])) {
+                parsedData.rooms[k] = parsedData.rooms[k].filter(x => !String(x).startsWith("__"));
+              }
+            }
+          }
+          cleanContent = JSON.stringify(parsedData, null, 2);
+        } catch {}
+        memEl.value = cleanContent || JSON.stringify({ facts: [] }, null, 2);
+        try { renderMemoryChips(cleanContent); } catch {}
     function renderMemoryChips(jsonText) {
       try {
         const box = document.getElementById("memChips");
@@ -647,7 +692,7 @@
         }
         {
           const fl = [];
-          for (const k of Object.keys(scopes)) { (scopes[k] || []).forEach(f => fl.push({ scope: k, text: String(f) })); }
+          for (const k of Object.keys(scopes)) { (scopes[k] || []).filter(f => !String(f).startsWith('__')).forEach(f => fl.push({ scope: k, text: String(f) })); }
           const mkChip = (label, title, bg, fn) => {
             const c = document.createElement("button");
             c.className = "small-btn"; c.innerText = label; c.title = title || label;
@@ -1093,6 +1138,7 @@
     function renderCurrentRoomMessages() {
       const room = getCurrentRoom();
       applyRoomPin(room);
+      restoreRoomCodingToggle(room.id);
       currentRoomBadge.innerText = "💬 " + room.name;
       chatMessages.innerHTML = "";
       const onlyBmk = !!window.__bmkOnly;
