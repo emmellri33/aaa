@@ -1867,24 +1867,12 @@ app.delete("/api/key", (req, res) => {
   res.json({ ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY) });
 });
 
-// --- SESSION 분할1: 세션 기록 API (/api/session) ---
-app.get('/api/session', (req, res) => {
-  const roomId = sanitizeSessionRoomId(req.query.roomId);
-  if (!roomId) {
-    return res.status(400).json({ ok: false, error: "유효하지 않은 roomId입니다 (../, /, \\, # 금지)" });
-  }
-
-  let fullContent = readSessionFile();
-  fullContent = ensureRoomSection(fullContent, roomId);
-  const section = getRoomSection(fullContent, roomId);
-  res.json({ ok: true, section });
-});
-
-app.post('/api/session', (req, res) => {
-  const { roomId: rawRoomId, tag, status, fact, next, replaceIndex, line: customLine } = req.body || {};
+// --- SESSION 분할1·4: 세션 기록 내부 함수 및 API (/api/session) ---
+function recordSessionEntry(params) {
+  const { roomId: rawRoomId, tag, status, fact, next, replaceIndex, line: customLine, milestone, date } = params || {};
   const roomId = sanitizeSessionRoomId(rawRoomId);
   if (!roomId) {
-    return res.status(400).json({ ok: false, error: "유효하지 않은 roomId입니다 (../, /, \\, # 금지)" });
+    return { ok: false, status: 400, error: "유효하지 않은 roomId입니다 (../, /, \\, # 금지)" };
   }
 
   const lineRegex = /^#\s+\[[^\]\r\n]+\]\s+\(\d{4}-\d{2}-\d{2}\)\s+\[(완료|진행|대기)\]:\s+.+?\s+→\s+.+?(?:\s+\[fp:[a-f0-9]{8}\])?$/;
@@ -1895,30 +1883,30 @@ app.post('/api/session', (req, res) => {
   if (customLine && typeof customLine === "string") {
     newLine = customLine.trim();
     if (!lineRegex.test(newLine)) {
-      return res.status(400).json({ ok: false, error: "줄 문법이 올바르지 않습니다 (# [태그] (날짜) [상태]: 사실 → 상태/다음)" });
+      return { ok: false, status: 400, error: "줄 문법이 올바르지 않습니다 (# [태그] (날짜) [상태]: 사실 → 상태/다음)" };
     }
   } else {
     const cleanTag = String(tag || "").trim().replace(/^\[|\]$/g, "");
     if (!cleanTag) {
-      return res.status(400).json({ ok: false, error: "tag가 누락되었습니다." });
+      return { ok: false, status: 400, error: "tag가 누락되었습니다." };
     }
 
     const rawStatus = String(status || "").trim().replace(/^\[|\]$/g, "");
     if (!["완료", "진행", "대기"].includes(rawStatus)) {
-      return res.status(400).json({ ok: false, error: "상태 토큰은 [완료], [진행], [대기]만 허용됩니다." });
+      return { ok: false, status: 400, error: "상태 토큰은 [완료], [진행], [대기]만 허용됩니다." };
     }
 
     let cleanFact = String(fact || "").trim();
     if (!cleanFact) {
-      return res.status(400).json({ ok: false, error: "fact가 누락되었습니다." });
+      return { ok: false, status: 400, error: "fact가 누락되었습니다." };
     }
 
     const cleanNext = String(next || "").trim();
     if (!cleanNext) {
-      return res.status(400).json({ ok: false, error: "next가 누락되었습니다." });
+      return { ok: false, status: 400, error: "next가 누락되었습니다." };
     }
 
-    const dateStr = String(req.body.date || "").trim() || new Date().toISOString().slice(0, 10);
+    const dateStr = String(date || "").trim() || new Date().toISOString().slice(0, 10);
 
     // 200자 초과 시 session-detail/<날짜>-<주제>.md로 분리
     if (cleanFact.length > 200) {
@@ -1936,13 +1924,13 @@ app.post('/api/session', (req, res) => {
     }
 
     const sessionFp = calcSessionFp();
-    const isMilestone = req.body.milestone !== false;
+    const isMilestone = milestone !== false;
     const fpSuffix = isMilestone ? ` [fp:${sessionFp}]` : "";
 
     newLine = `# [${cleanTag}] (${dateStr}) [${rawStatus}]: ${cleanFact} → ${cleanNext}${fpSuffix}`;
 
     if (!lineRegex.test(newLine)) {
-      return res.status(400).json({ ok: false, error: "조립된 줄 문법이 올바르지 않습니다 (# [태그] (날짜) [상태]: 사실 → 상태/다음)" });
+      return { ok: false, status: 400, error: "조립된 줄 문법이 올바르지 않습니다 (# [태그] (날짜) [상태]: 사실 → 상태/다음)" };
     }
   }
 
@@ -1982,13 +1970,33 @@ app.post('/api/session', (req, res) => {
     console.error("SESSION pipe: 상한 헬퍼 실행 오류", capErr.message);
   }
 
-  res.json({
+  return {
     ok: true,
     line: newLine,
     ...(warning ? { warning } : {}),
     ...(detailFile ? { detailFile } : {}),
     ...(archiveReview ? { archiveReview } : {})
-  });
+  };
+}
+
+app.get('/api/session', (req, res) => {
+  const roomId = sanitizeSessionRoomId(req.query.roomId);
+  if (!roomId) {
+    return res.status(400).json({ ok: false, error: "유효하지 않은 roomId입니다 (../, /, \\, # 금지)" });
+  }
+
+  let fullContent = readSessionFile();
+  fullContent = ensureRoomSection(fullContent, roomId);
+  const section = getRoomSection(fullContent, roomId);
+  res.json({ ok: true, section });
+});
+
+app.post('/api/session', (req, res) => {
+  const result = recordSessionEntry(req.body);
+  if (!result.ok && result.status) {
+    return res.status(result.status).json(result);
+  }
+  res.json(result);
 });
 
 // --- 기억 파일 (memory.json) GET / POST / DELETE ---
