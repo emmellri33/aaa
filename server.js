@@ -402,13 +402,15 @@ function logUsageCall({ route, model, inChars, outChars, inTok, outTok }) {
       bucket.inHi = (Number(bucket.inHi) || 0) + inHi;
       bucket.outLo = (Number(bucket.outLo) || 0) + outLo;
       bucket.outHi = (Number(bucket.outHi) || 0) + outHi;
+      bucket.inTok = (Number(bucket.inTok) || 0) + (Number(inTok) || 0);
+      bucket.outTok = (Number(bucket.outTok) || 0) + (Number(outTok) || 0);
       bucket.cost = (Number(bucket.cost) || 0) + callCost;
     };
     addStats(totals.all);
     const nowIso = new Date().toISOString();
     const dayKey = nowIso.slice(0, 10);
     if (!totals.byDay[dayKey]) {
-      totals.byDay[dayKey] = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0, cost: 0 };
+      totals.byDay[dayKey] = { calls: 0, inLo: 0, inHi: 0, outLo: 0, outHi: 0, inTok: 0, outTok: 0, cost: 0 };
     }
     addStats(totals.byDay[dayKey]);
     const dayKeys = Object.keys(totals.byDay).sort();
@@ -1454,6 +1456,7 @@ app.post('/api/ai-modify', async (req, res) => {
 
         // TODO(소유분할): 분류기 사용량(lite) 본작업과 분리 계산 상수명 사용
         console.log(`ROUTER LITE LOG: r=${liteR}, why=${liteWhy}, conf=${liteConf}, 승격=${promoted}, 팩=${liteR}팩, 입력길이=${liteInput.length}`);
+        logUsageCall({ route: "router-lite", model: "gemini-3.5-flash-lite", inChars: litePrompt.length, outChars: liteRaw.length, inTok: liteResponse?.usageMetadata?.promptTokenCount ?? null, outTok: liteResponse?.usageMetadata?.candidatesTokenCount ?? null });
 
         if (liteR === "가벼움") {
            // TODO(소유분할): b-가벼움 부착 시 /api/chat 호출 인자 처리
