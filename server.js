@@ -1369,11 +1369,9 @@ app.post('/api/ai-modify', async (req, res) => {
       }
     }
     
-    let htmlSource = currentContent;
-    if (!htmlSource) {
-      const p = path.join(__dirname, targetFile);
-      htmlSource = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
-    }
+    // --- TODO-24: 디스크 독점 읽기 (currentContent 무시) ---
+    const p = path.join(__dirname, targetFile);
+    let htmlSource = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
     const activeKey = getActiveKey();
 
     if (!activeKey && (!Array.isArray(mockResponses) || mockResponses.length === 0)) {
