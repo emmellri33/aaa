@@ -1293,6 +1293,40 @@ app.post('/api/ai-modify', async (req, res) => {
 
     const facts = readMemoryFacts(req.body ? req.body.roomId : null);
     const memoryBlock = facts.length > 0 ? "\n\n[공유 기억 (memory.json)]\n- " + facts.join("\n- ") : "";
+
+    // --- SESSION 분할3: 방 입장 목차 읽기 및 복귀 대조 (fp) ---
+    const sessionRoomId = sanitizeSessionRoomId((req.body && req.body.roomId && String(req.body.roomId).trim()) || "global") || "global";
+    let fullSession = readSessionFile();
+    let sessionSection = getRoomSection(fullSession, sessionRoomId);
+
+    const currentFp = calcSessionFp();
+    const sessionLines = sessionSection.split('\n').map(l => l.trim()).filter(Boolean);
+    let latestFp = null;
+    for (const line of sessionLines) {
+      const fpMatch = line.match(/\[fp:([a-f0-9]{8})\]/);
+      if (fpMatch) {
+        latestFp = fpMatch[1];
+        break;
+      }
+    }
+
+    if (latestFp && latestFp !== currentFp) {
+      const topLine = sessionLines[0] || "";
+      // 해석 ③: 섹션 맨 위 줄이 같은 새값의 불일치 보고면 중복 기록 생략
+      if (!(topLine.startsWith("# [복귀]") && topLine.includes(`디스크 fp ${currentFp}`))) {
+        const today = new Date().toISOString().slice(0, 10);
+        const mismatchLine = `# [복귀] (${today}) [진행]: 기록과 현실 불일치: 디스크 fp ${currentFp} (기록 ${latestFp}) → 다음 요청 시 fp 갱신`;
+        updateRoomSection(fullSession, sessionRoomId, (secBody) => {
+          const lines = secBody.split('\n').map(l => l.trim()).filter(l => l.startsWith('# '));
+          lines.unshift(mismatchLine);
+          return '\n' + lines.join('\n') + '\n';
+        });
+        fullSession = readSessionFile();
+        sessionSection = getRoomSection(fullSession, sessionRoomId);
+      }
+    }
+
+    const sessionBlock = sessionSection ? ("\n\n[방 작업 목차 (session.md)]\n" + sessionSection) : "";
     const failBlock = searchRelevantFailures(instruction + " " + (retryError || ""));
     const failureNote = failBlock ? "\n\n[과거 실패 일지 (failures.md) — 동일 실수 반복 금지]\n" + failBlock : "";
     const failedChunkBody = failedChunk || null;
@@ -1305,9 +1339,7 @@ app.post('/api/ai-modify', async (req, res) => {
     // --- ROUTER 분할3: 4단계 lite 분류 실호출 ---
     if (isUndecided) {
       try {
-        const c2RoomId = (req.body && req.body.roomId && String(req.body.roomId).trim()) || "-";
-        // TODO(소유분할): SESSION 방 id 연동
-        const metaLine = `방:${c2RoomId} 토글:${codingToggle} 타겟:${targetFile}`;
+        const metaLine = `방:${sessionRoomId} 토글:${codingToggle} 타겟:${targetFile}`;
         const liteInput = instruction.length > 2000 ? instruction.slice(0, 2000) : instruction;
         const litePrompt = ROUTER_LITE_PROMPT + "\n\n[메타]\n" + metaLine + "\n\n[요청]\n" + liteInput;
 
@@ -1366,7 +1398,7 @@ app.post('/api/ai-modify', async (req, res) => {
 
            const feasTargetHeader = "[확정 작업 대상 파일: " + targetFile + "]\n";
            const feasDecision = `모드: 타당성 판단 (라우터: 패치, 신뢰도 ${liteConf}, 코딩 OFF)`;
-           const feasPrompt = feasTargetHeader + PATCH_SYSTEM_PROMPT + "\n[현재 라우터 판정]\n" + feasDecision + "\n\n[적용 설명서(b팩)]\n" + BPACK_FEASIBILITY + memoryBlock + recentBlock + "\n\n" + feasCodeBlock + "\n\n[사용자 지시]\n" + signalText;
+           const feasPrompt = feasTargetHeader + PATCH_SYSTEM_PROMPT + "\n[현재 라우터 판정]\n" + feasDecision + "\n\n[적용 설명서(b팩)]\n" + BPACK_FEASIBILITY + memoryBlock + sessionBlock + recentBlock + "\n\n" + feasCodeBlock + "\n\n[사용자 지시]\n" + signalText;
 
            let feasText = "";
            let feasUsage = null;
@@ -1530,7 +1562,7 @@ app.post('/api/ai-modify', async (req, res) => {
       const targetHeader = "[확정 작업 대상 파일: " + targetFile + "]\n(주의: 지시문이나 이전 대화의 다른 target 표기와 무관하게, 이번 작업 대상 파일은 오직 \"" + targetFile + "\" 1개로 고정됩니다. JSON 응답의 target 필드에도 반드시 \"" + targetFile + "\"을 출력하세요.)\n\n";
       
       const assembledPrompt = PATCH_SYSTEM_PROMPT + "\n[현재 라우터 판정]\n" + routerDecisionLog + "\n\n[적용 설명서(b팩)]\n" + appliedBPack;
-      const prompt = targetHeader + assembledPrompt + memoryBlock + failureNote + retryNote + recentBlock + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
+      const prompt = targetHeader + assembledPrompt + memoryBlock + sessionBlock + failureNote + retryNote + recentBlock + codeSection + historySection + roundHint + "\n\n[사용자 지시]\n" + instruction;
 
       console.log("MODIFY round=" + round, new Date().toISOString(), "model=" + useModel, "baseChars=" + PATCH_SYSTEM_PROMPT.length, retryError ? "(retry)" : "");
 
