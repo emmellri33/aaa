@@ -1470,7 +1470,7 @@ app.post('/api/ai-modify', async (req, res) => {
       try {
         parsed = JSON.parse(jsonStr);
       } catch (err) {
-        return res.status(422).json({ ok: false, error: "AI 응답이 유효한 JSON 형식이 아닙니다.", raw: jsonStr });
+        return res.status(422).json({ ok: false, error: "AI 응답이 유효한 JSON 형식이 아닙니다.\n이 사유를 최우선 반영", raw: jsonStr });
       }
 
       if (parsed.type === "patch" || parsed.type === "question") {
@@ -1522,7 +1522,7 @@ app.post('/api/ai-modify', async (req, res) => {
         continue;
       }
 
-      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + parsed.type, patch: parsed });
+      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + parsed.type + "\n이 사유를 최우선 반영", patch: parsed });
     }
 
     if (!finalParsed) {
@@ -1548,17 +1548,17 @@ app.post('/api/ai-modify', async (req, res) => {
       } else if (typeof finalParsed.search === "string" && typeof finalParsed.replace === "string") {
         rawEdits = [{ search: finalParsed.search, replace: finalParsed.replace }];
       } else {
-        return res.status(422).json({ ok: false, error: "patch JSON에 edits 배열 또는 search/replace 필드가 누락되었습니다.", patch: finalParsed });
+        return res.status(422).json({ ok: false, error: "patch JSON에 edits 배열 또는 search/replace 필드가 누락되었습니다.\n이 사유를 최우선 반영", patch: finalParsed });
       }
 
        for (let i = 0; i < rawEdits.length; i++) {
         const ed = rawEdits[i];
         if (!ed || typeof ed.search !== "string" || !ed.search || typeof ed.replace !== "string") {
-          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + "의 search/replace 형식이 올바르지 않습니다.", patch: finalParsed });
+          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + "의 search/replace 형식이 올바르지 않습니다.\n이 사유를 최우선 반영", patch: finalParsed });
         }
         const wsCheck = checkWhitespaceAndProps(ed.search, ed.replace);
         if (!wsCheck.ok) {
-          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + " 공백/속성 검증 실패: " + wsCheck.reason, patch: finalParsed });
+          return res.status(422).json({ ok: false, error: "조각 #" + (i + 1) + " 공백/속성 검증 실패: " + wsCheck.reason + "\n이 사유를 최우선 반영", patch: finalParsed });
         }
       }
       let totalRemoved = 0, totalAdded = 0;
@@ -1569,11 +1569,11 @@ app.post('/api/ai-modify', async (req, res) => {
       const netRemoved = totalRemoved - totalAdded;
       if (netRemoved >= 30 && !String(finalParsed.explanation || "").includes("[위험]")) {
         recordSecurityOrToolFailure("위험표기 누락 차단(422)", "순삭제 " + netRemoved + "줄", "[위험] 1줄 추가 후 재요청");
-        return res.status(422).json({ ok: false, error: "거부됨(422): 순삭제 " + netRemoved + "줄 — explanation [왜] 끝에 [위험] 한 줄(되돌릴 수 없는 범위와 이유)을 추가하세요.", patch: finalParsed });
+        return res.status(422).json({ ok: false, error: "거부됨(422): 순삭제 " + netRemoved + "줄 — explanation [왜] 끝에 [위험] 한 줄(되돌릴 수 없는 범위와 이유)을 추가하세요.\n이 사유를 최우선 반영", patch: finalParsed });
       }
       if (totalRemoved - totalAdded >= 50) {
         recordSecurityOrToolFailure("대규모 삭제 차단(422)", "순삭제 " + (totalRemoved - totalAdded) + "줄", "조각 분할 후 재요청");
-        return res.status(422).json({ ok: false, error: "거부됨(422): 대규모 삭제 감지(순삭제 " + (totalRemoved - totalAdded) + "줄). 삭제 범위를 조각으로 나누거나 유지할 부분을 명시해 다시 요청하세요.", patch: finalParsed });
+        return res.status(422).json({ ok: false, error: "거부됨(422): 대규모 삭제 감지(순삭제 " + (totalRemoved - totalAdded) + "줄). 삭제 범위를 조각으로 나누거나 유지할 부분을 명시해 다시 요청하세요.\n이 사유를 최우선 반영", patch: finalParsed });
       }
 
       finalParsed.edits = rawEdits;
@@ -1586,7 +1586,7 @@ app.post('/api/ai-modify', async (req, res) => {
           if (_fcT && _curT === _fcT) {
             for (let _fi = 0; _fi < rawEdits.length; _fi++) {
               if (rawEdits[_fi].search === failedChunkBody.search) {
-                return res.status(422).json({ ok: false, error: "거부됨(422): [동일 조각 재제출 금지] " + (_fi + 1) + "번째 조각이 실패 조각과 동일합니다. 다른 가설로 다시 작성하세요.", patch: finalParsed });
+                return res.status(422).json({ ok: false, error: "거부됨(422): [동일 조각 재제출 금지] " + (_fi + 1) + "번째 조각이 실패 조각과 동일합니다. 다른 가설로 다시 작성하세요.\n이 사유를 최우선 반영", patch: finalParsed });
               }
             }
           }
@@ -1601,7 +1601,7 @@ app.post('/api/ai-modify', async (req, res) => {
         if (isExcerptModeForGates) {
           const validEvidence = evidenceLog.some(e => e.ok && (e.resultLength > 0 || (e.args && String(e.args.pattern || "").includes("없음"))));
           if (!validEvidence) {
-            return res.status(422).json({ ok: false, error: "[기계컷: 증거 미첨부] 발췌 모드에서는 파일의 일부만 보입니다. 대상 코드를 read/grep 도구로 직접 확인(증거 확보)한 뒤에 패치를 제안하세요.", patch: finalParsed });
+            return res.status(422).json({ ok: false, error: "[기계컷: 증거 미첨부] 발췌 모드에서는 파일의 일부만 보입니다. 대상 코드를 read/grep 도구로 직접 확인(증거 확보)한 뒤에 패치를 제안하세요.\n이 사유를 최우선 반영", patch: finalParsed });
           }
         }
 
@@ -1613,7 +1613,7 @@ app.post('/api/ai-modify', async (req, res) => {
              return htmlSource.includes(h.location) || htmlSource.includes(h.reason); // 매우 기초적인 grep 대조 (향후 정교화 가능)
           });
           if (!validHypo) {
-             return res.status(422).json({ ok: false, error: "[기계컷: 가설 대조 실패] 제출하신 가설들이 현재 원본 코드와 일치하지 않습니다. 도구로 다시 확인하고 새 가설을 수립하세요.", patch: finalParsed });
+             return res.status(422).json({ ok: false, error: "[기계컷: 가설 대조 실패] 제출하신 가설들이 현재 원본 코드와 일치하지 않습니다. 도구로 다시 확인하고 새 가설을 수립하세요.\n이 사유를 최우선 반영", patch: finalParsed });
           }
         }
 
@@ -1625,7 +1625,7 @@ app.post('/api/ai-modify', async (req, res) => {
             const today = new Date().toISOString().slice(0, 10);
             const isBlocked = rawFailures.some(l => l.includes(today) && l.includes(sig));
             if (isBlocked) {
-               return res.status(422).json({ ok: false, error: "[기계컷: 동일 시그니처 재시도] 오늘 이미 실패로 기록된 동일한 수정 사항(서명: " + sig + ")입니다. 전혀 다른 접근법을 사용하세요.", patch: finalParsed });
+               return res.status(422).json({ ok: false, error: "[기계컷: 동일 시그니처 재시도] 오늘 이미 실패로 기록된 동일한 수정 사항(서명: " + sig + ")입니다. 전혀 다른 접근법을 사용하세요.\n이 사유를 최우선 반영", patch: finalParsed });
             }
           }
         }
@@ -1645,7 +1645,7 @@ app.post('/api/ai-modify', async (req, res) => {
             try { recordSecurityOrToolFailure("G2 원본 불일치 차단(422)", targetFile + " " + (i + 1) + "번째 조각 0회 매치", "search 재확인 후 재요청", generatePatchSignature(targetFile, ed.search)); } catch (e) {}
             let errorMsg = `[기계컷: 원본 불일치 ${i + 1}번째 조각 0회 매치] 해당 조각이 메모리상 복사본(순차 적용 중 상태)에 존재하지 않습니다. search를 100% 동일하게 맞춰주세요.`;
             if (isExcerptMode) errorMsg += "\n(발췌 모드 참고: 파일 전체를 보지 못해 생긴 오차일 수 있습니다. 도구로 정확한 위치를 다시 확인하세요.)";
-            return res.status(422).json({ ok: false, error: errorMsg, patch: finalParsed, failedChunk: { target: targetFile, search: ed.search, replace: ed.replace } });
+            return res.status(422).json({ ok: false, error: errorMsg + "\n이 사유를 최우선 반영", patch: finalParsed, failedChunk: { target: targetFile, search: ed.search, replace: ed.replace } });
           }
           if (count >= 2) {
             try { recordSecurityOrToolFailure("G2 다매치 차단(422)", targetFile + " " + (i + 1) + "번째 조각 " + count + "회 매치", "search 재확인 후 재요청", generatePatchSignature(targetFile, ed.search)); } catch (e) {}
@@ -1658,7 +1658,7 @@ app.post('/api/ai-modify', async (req, res) => {
                  errorMsg += "\n[참고 주변 코드 (첫 발견 위치)]\n..." + before.split('\n').slice(-3).join('\n') + "\n" + ed.search + "\n" + after.split('\n').slice(0, 3).join('\n') + "...";
                }
             }
-            return res.status(422).json({ ok: false, error: errorMsg, patch: finalParsed, failedChunk: { target: targetFile, search: ed.search, replace: ed.replace } });
+            return res.status(422).json({ ok: false, error: errorMsg + "\n이 사유를 최우선 반영", patch: finalParsed, failedChunk: { target: targetFile, search: ed.search, replace: ed.replace } });
           }
           workingContent = workingContent.replace(ed.search, ed.replace);
         }
@@ -1668,7 +1668,7 @@ app.post('/api/ai-modify', async (req, res) => {
           if (!checkRes.ok) {
             try { recordSecurityOrToolFailure("G8 합본 문법 차단(422)", targetFile + " 합본 문법 오류", "search 재확인 후 재요청", generatePatchSignature(targetFile, rawEdits[0].search)); } catch (e) {}
             const errorMsg = `[기계컷: 합본 문법 오류 — 원인] 패치 적용 후 코드 구문 에러 발생:\n${checkRes.error}`;
-            return res.status(422).json({ ok: false, error: errorMsg, patch: finalParsed, failedChunk: { target: targetFile, search: rawEdits[0].search, replace: rawEdits[0].replace } });
+            return res.status(422).json({ ok: false, error: errorMsg + "\n이 사유를 최우선 반영", patch: finalParsed, failedChunk: { target: targetFile, search: rawEdits[0].search, replace: rawEdits[0].replace } });
           }
         }
       }
@@ -1693,10 +1693,10 @@ app.post('/api/ai-modify', async (req, res) => {
       }
     } else if (finalParsed.type === "question") {
       if (typeof finalParsed.question !== "string") {
-        return res.status(422).json({ ok: false, error: "question JSON에 question 필드가 누락되었습니다.", patch: finalParsed });
+        return res.status(422).json({ ok: false, error: "question JSON에 question 필드가 누락되었습니다.\n이 사유를 최우선 반영", patch: finalParsed });
       }
     } else {
-      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + finalParsed.type, patch: finalParsed });
+      return res.status(422).json({ ok: false, error: "알 수 없는 type 입니다: " + finalParsed.type + "\n이 사유를 최우선 반영", patch: finalParsed });
     }
 
     const banWords = ["검증완료", "됩니다", "완료"];
@@ -1704,7 +1704,7 @@ app.post('/api/ai-modify', async (req, res) => {
     const hitBan = banWords.find(w => scanText.includes(w));
     if (hitBan) {
       recordSecurityOrToolFailure("완료표현 차단(422)", "발견: " + hitBan, "증거 기준 재작성");
-      return res.status(422).json({ ok: false, error: "거부됨(422): 근거 없는 완료 표현 금지(발견: \"" + hitBan + "\"). 증거(앵커·실행 결과) 기준으로 다시 작성하세요.", patch: finalParsed });
+      return res.status(422).json({ ok: false, error: "거부됨(422): 근거 없는 완료 표현 금지(발견: \"" + hitBan + "\"). 증거(앵커·실행 결과) 기준으로 다시 작성하세요.\n이 사유를 최우선 반영", patch: finalParsed });
     }
 
     const usage = logUsageCall({
