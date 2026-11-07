@@ -31,6 +31,9 @@
       "[뭘] (의도: h1 태그 색상 변경) b2-t1.html의 h1 태그 색상을 파란색(#38bdf8 또는 blue)으로 변경합니다 (총 1곳) / [왜] (근거: b2-t1.html 7행의 `<style>*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0f172a;color:#f8fafc;padding:24px}h1{font-size:20px}` 코드 인용, [추측] 기존 링크 색상과 어울리도록 #38bdf8 사용)",
       "[뭘] (의도: 제목 텍스트 변경) index.html의 h1#hello 내용을 'V4 확인'에서 '시금치 된장국'으로 1곳 수정합니다 / [왜] (근거: index.html 104행 `<h1 id=\"hello\"><span style=\"color: #ff4d4f;\">V</span><span style=\"color: #ffa940;\">4</span> <span style=\"color: #ffec3d;\">확</span><span style=\"color: #73d13d;\">인</span></h1>` 인용, [추측] 기존 무지개 색상 스타일을 유지하여 각 글자에 순서대로 색상을 적용합니다)",
       "[뭘] (의도: 엄마 바보 텍스트를 할 일 목록으로 변경) index.html의 h2 태그 안의 텍스트와 span 태그 구조를 '할 일 목록'에 맞게 수정합니다 (총 1곳) / [왜] (근거: 110번째 줄 `<h2><span style=\"color: #ff4d4f;\">엄</span><span style=\"color: #ffa940;\">마</span> <span style=\"color: #ffec3d;\">바</span><span style=\"color: #73d13d;\">보</span></h2>` 코드 인용하여 사용자 요청 반영)"
+    ],
+    "room_1794053800997": [
+      "__codingToggle:ON"
     ]
   }
 }
