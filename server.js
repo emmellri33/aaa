@@ -702,6 +702,7 @@ app.post('/api/page/:target', (req, res) => {
 // --- ROUTER 분할3: b팩 3종 확정 (DIET §2 안) ---
 const BPACK_PATCH = [
   "- 패치 모드: 패치 외 말 금지. 출력은 JSON 1개만 (코드블록·잡담 금지). (F2-역할 + F3 조건부 — 코딩 ON일 때만 적용)",
+  "- 출력 JSON 형식 고정: {\"type\":\"patch\",\"target\",\"edits\":[{\"search\",\"replace\"}]} 또는 {\"type\":\"question\",\"question\"}. type·edits 빠지면 컷.",
   "- 터미널은 한 번에 한 블록, 붙여넣기 전 커밋. (F1-터미널 — ON일 때만. OFF엔 run 호출이 없음)",
   "- search는 원본에 정확히 1회, 발췌모드 무증거 제출 금지. (F5-압축 — ON일 때만. 양쪽 조항 다 패치 전용)",
   "- search는 원본과 토씨까지 일치. replace는 대상만 바꾸고 나머지는 원본 그대로. (A2)",
