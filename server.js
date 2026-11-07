@@ -3139,6 +3139,11 @@ app.post('/api/snapshot', async (req, res) => {
   }
 });
 
+app.post('/api/restart', (req, res) => {
+  res.json({ ok: true });
+  setTimeout(() => process.exit(0), 1000);
+});
+
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
